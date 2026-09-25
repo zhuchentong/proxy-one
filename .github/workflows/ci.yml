@@ -65,7 +65,14 @@ jobs:
       - uses: actions/checkout@v5
       - env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes -R "$GITHUB_REPOSITORY"
+        # 幂等：release 已存在（如 tag 重指向修复后的提交）时跳过创建，
+        # 让后续 upload job 可以对既有 release 补传资产
+        run: |
+          if gh release view "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "release 已存在，跳过创建"
+          else
+            gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes -R "$GITHUB_REPOSITORY"
+          fi
 
   release-windows:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -114,7 +121,9 @@ jobs:
           cp target/release/proxyone pack/
           cp README.md pack/
           tar -czf proxyone-linux-x64.tar.gz -C pack proxyone README.md
-          sha256sum target/release/proxyone > proxyone-linux-x64.sha256
+          # 裸二进制复制到仓库根目录供下方 upload 与更新器下载（update.rs 按固定名筛选）
+          cp target/release/proxyone proxyone-linux-x64
+          sha256sum proxyone-linux-x64 > proxyone-linux-x64.sha256
       # 裸二进制 + 校验和供自动更新器下载；tar.gz 供手动下载
       - name: Upload binary, tarball and sha256
         env:
