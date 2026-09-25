@@ -2,6 +2,8 @@
 
 [![CI](https://github.com/zhuchentong/proxy-one/actions/workflows/ci.yml/badge.svg)](https://github.com/zhuchentong/proxy-one/actions/workflows/ci.yml)
 
+简体中文 | [English](README.en.md)
+
 **proxyone** 是一个轻量级代理故障切换网关：本机统一代理入口 `127.0.0.1:8888`，背后按优先级聚合多个上游代理。高优先级上游失效时自动切换、恢复后自动切回，应用程序只需指向 8888，无需手动调整。
 
 > Lightweight proxy failover gateway: a mixed HTTP/SOCKS5 entry that aggregates prioritized upstream proxies with health-checked automatic failover.
@@ -58,11 +60,11 @@
 ### Linux 构建依赖（Manjaro / Arch）
 
 ```bash
-sudo pacman -S --needed rust gtk3 libappindicator-gtk3 openssl pkgconf
+sudo pacman -S --needed rust gtk3 openssl pkgconf
 cargo build --release
 ```
 
-GUI 依赖 Wayland 或 X11 会话；中文字体建议安装 `noto-fonts-cjk`。Debian/Ubuntu 系对应包为 `libgtk-3-dev libayatana-appindicator3-dev pkg-config libssl-dev`。
+GUI 依赖 Wayland 或 X11 会话；中文字体建议安装 `noto-fonts-cjk`。Debian/Ubuntu 系对应包为 `libgtk-3-dev pkg-config libssl-dev`。
 
 ## 快速开始
 
@@ -218,10 +220,12 @@ priority = 2
 src/
   main.rs            入口：CLI 参数（--headless / --minimized / --updated）、GUI 与 headless 启动
   config.rs          TOML 配置模型与加载/保存（带默认值回退与单元测试）
-  autostart.rs       开机启动：HKCU Run 注册表键读写 + 路径自愈与改名迁移
-  sysproxy.rs        系统代理：WinINet 注册表 + 快照恢复/崩溃自愈/冲突保护
+  autostart_windows.rs  开机启动（Windows）：HKCU Run 注册表读写 + 路径自愈与改名迁移
+  autostart_linux.rs    开机启动（Linux）：XDG autostart 桌面项
+  sysproxy_windows.rs   系统代理（Windows）：WinINet 注册表 + 快照恢复/崩溃自愈/冲突保护
+  sysproxy_linux.rs     系统代理（Linux）：environment.d 片段写入
   update.rs          自动更新：GitHub Releases 检查、经网关优先下载、原子替换
-  tray.rs            托盘图标/菜单（程序化生成三态图标，事件转发给 GUI）
+  tray.rs            托盘图标/菜单（程序化生成三态图标；Windows 实装，Linux 跳过并记日志）
   ui/
     ui.rs            App 状态与 eframe 编排（logic 托盘/关闭拦截 + 布局）
     theme.rs         明暗两套配色、Visuals 定制、中文字体加载
@@ -251,7 +255,7 @@ src/
 cargo build --release
 ```
 
-产物为自包含单文件 `target\release\proxyone.exe`。单元测试：`cargo test`（覆盖配置解析、版本号比较、GitHub 资产筛选、sha256 解析、URL/authority 解析、HTTP 改写语义、路由候选排序、健康检查滞后转移、头部读取器等，共 45 个）。
+产物为自包含单文件 `target/release/proxyone`（Windows 为 `proxyone.exe`）。单元测试：`cargo test`（覆盖配置解析、版本号比较、GitHub 资产筛选、sha256 解析、URL/authority 解析、HTTP 改写语义、路由候选排序、健康检查滞后转移、头部读取器等，另含平台专属用例）。
 
 开发环境说明：
 
@@ -262,7 +266,7 @@ cargo build --release
 ## 已知限制
 
 - 不代理 UDP（SOCKS5 仅支持 CONNECT，BIND / UDP ASSOCIATE 明确拒绝）
-- Linux 托盘图标暂未支持（阶段 3 计划，需 GTK 事件循环集成；当前 GUI 正常运行，仅无托盘）
+- Linux 托盘图标暂未支持（阶段 3 计划，倾向 KSNI 路线；当前 GUI 正常运行，仅无托盘）
 - Linux 系统代理为 environment.d 片段（下次登录生效），不支持已运行程序的即时接管
 - 入站侧 SOCKS5 仅支持无认证（仅监听回环地址，本地使用无需认证）
 - 健康检查 `test_url` 仅支持 `http://`（默认 generate_204 即为 http）
