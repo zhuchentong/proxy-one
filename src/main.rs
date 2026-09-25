@@ -2,9 +2,19 @@
 
 //! 代理故障切换网关：混合 HTTP/SOCKS5 入口 + 多上游优先级故障切换 + egui GUI。
 
+#[cfg(windows)]
+#[path = "autostart_windows.rs"]
+mod autostart;
+#[cfg(not(windows))]
+#[path = "autostart_linux.rs"]
 mod autostart;
 mod config;
 mod engine;
+#[cfg(windows)]
+#[path = "sysproxy_windows.rs"]
+mod sysproxy;
+#[cfg(not(windows))]
+#[path = "sysproxy_linux.rs"]
 mod sysproxy;
 mod tray;
 mod ui;

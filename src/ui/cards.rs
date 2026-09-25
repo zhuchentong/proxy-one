@@ -441,9 +441,7 @@ impl App {
                             match crate::config::logs_dir() {
                                 Some(d) => {
                                     let _ = std::fs::create_dir_all(&d);
-                                    let _ = std::process::Command::new("explorer.exe")
-                                        .arg(&d)
-                                        .spawn();
+                                    let _ = super::open_path(&d);
                                 }
                                 None => {
                                     self.notify(("日志目录不可用".into(), ORANGE));
@@ -461,9 +459,7 @@ impl App {
                         {
                             if self.cfg_path.parent().is_some() {
                                 // explorer 恒返回非零码，只 spawn 不查结果
-                                let _ = std::process::Command::new("explorer.exe")
-                                    .arg(format!("/select,\"{}\"", self.cfg_path.display()))
-                                    .spawn();
+                                let _ = super::reveal_path(&self.cfg_path);
                             } else {
                                 self.notify(("配置路径不可用".into(), ORANGE));
                             }

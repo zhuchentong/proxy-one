@@ -19,8 +19,15 @@ thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "io-util", "sync", "macros", "signal"] }
 toml = "1"
 tray-icon = "0.25"
+
+[target.'cfg(windows)'.dependencies]
 winreg = "0.52"
 windows-sys = { version = "0.61", features = ["Win32_Networking_WinInet"] }
+
+# Linux 需要 x11/wayland 窗口后端（winit 默认无后端时报 platform not supported）；
+# 放在 target 段避免这些特性把 glow/glutin 依赖拖进 Windows 构建
+[target.'cfg(target_os = "linux")'.dependencies]
+eframe = { version = "0.36", default-features = false, features = ["x11", "wayland"] }
 
 [profile.release]
 lto = "thin"

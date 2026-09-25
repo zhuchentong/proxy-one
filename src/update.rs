@@ -21,8 +21,15 @@ use std::time::Duration;
 /// 自动检查节流：GitHub 未认证限额 60 次/时/IP，24h 一次绰绰有余
 pub(crate) const CHECK_INTERVAL_SECS: u64 = 24 * 3600;
 pub(crate) const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+/// Release 资产名（见 .github/workflows/ci.yml，按平台筛选）
+#[cfg(windows)]
 const EXE_ASSET: &str = "proxyone.exe";
+#[cfg(windows)]
 const SHA_ASSET: &str = "proxyone.exe.sha256";
+#[cfg(not(windows))]
+const EXE_ASSET: &str = "proxyone-linux-x64";
+#[cfg(not(windows))]
+const SHA_ASSET: &str = "proxyone-linux-x64.sha256";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const RW_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_BODY: usize = 64 * 1024 * 1024;
@@ -158,8 +165,13 @@ pub(crate) fn download(
     {
         bail!("下载不完整：{}/{} 字节", exe.len(), cl);
     }
+    #[cfg(windows)]
     if !exe.starts_with(b"MZ") {
         bail!("下载内容不是 Windows 可执行文件");
+    }
+    #[cfg(not(windows))]
+    if !exe.starts_with(&[0x7f, b'E', b'L', b'F']) {
+        bail!("下载内容不是 Linux 可执行文件");
     }
     let actual = format!("{:x}", Sha256::digest(&exe));
     if !actual.eq_ignore_ascii_case(&expect) {
@@ -215,16 +227,26 @@ fn write_new(bytes: &[u8]) -> Result<()> {
 pub(crate) fn install() -> Result<()> {
     let cur = exe_path()?;
     let new_path = exe_sibling(".new")?;
-    let old_path = exe_sibling(".old")?;
     if !new_path.exists() {
         bail!("未找到已下载的更新文件");
     }
-    let _ = std::fs::remove_file(&old_path);
-    std::fs::rename(&cur, &old_path).with_context(|| format!("改名 {} 失败", cur.display()))?;
-    if let Err(e) = std::fs::rename(&new_path, &cur) {
-        // 回滚改名，保住当前进程对应的可执行文件名
-        let _ = std::fs::rename(&old_path, &cur);
-        return Err(anyhow!(e)).context("替换 exe 失败");
+    #[cfg(windows)]
+    {
+        // Windows 锁定运行中的 exe：先改名腾出目标名，再换入新版；
+        // 任一步失败都回滚改名，保住当前进程对应的可执行文件。
+        let old_path = exe_sibling(".old")?;
+        let _ = std::fs::remove_file(&old_path);
+        std::fs::rename(&cur, &old_path).with_context(|| format!("改名 {} 失败", cur.display()))?;
+        if let Err(e) = std::fs::rename(&new_path, &cur) {
+            let _ = std::fs::rename(&old_path, &cur);
+            return Err(anyhow!(e)).context("替换 exe 失败");
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        // Linux 允许对运行中的二进制做 rename 原子替换（旧 inode 由运行中的
+        // 进程保活），无需改名舞步。
+        std::fs::rename(&new_path, &cur).with_context(|| format!("替换 {} 失败", cur.display()))?;
     }
     std::process::Command::new(&cur)
         .arg("--updated")

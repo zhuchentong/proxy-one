@@ -19,6 +19,7 @@
 
 - [截图](#截图)
 - [功能特性](#功能特性)
+- [平台支持](#平台支持)
 - [快速开始](#快速开始)
 - [图形界面](#图形界面)
 - [系统代理](#系统代理)
@@ -41,6 +42,27 @@
 - **开机启动**：用户级注册表实现，无需管理员权限，路径变更后自动修正。
 - **自动更新**：基于 GitHub Releases，下载优先经自身网关转发（享受上游故障切换），三重完整性校验与原子替换。
 - **单文件便携**：Rust 单二进制，egui/eframe 原生 GUI；数据面为纯 TCP 隧道盲转发。
+
+## 平台支持
+
+| 功能 | Windows | Linux |
+| --- | --- | --- |
+| 代理引擎（混合入口、故障切换、健康检查） | ✅ | ✅ |
+| GUI | ✅ | ✅（Wayland / X11） |
+| 托盘图标 | ✅ | 计划支持（当前跳过并记录日志，不影响代理） |
+| 系统代理接管 | WinINet 注册表，快照/恢复/冲突保护 | 写 `~/.config/environment.d/proxyone.conf`，下次登录生效，关闭即删除恢复 |
+| 开机启动 | HKCU Run 注册表 | XDG autostart `~/.config/autostart/proxyone.desktop`（sway 需会话内有 `dex -a`） |
+| 自动更新 | ✅ | ✅（Linux 侧为 rename 原子替换） |
+| 无界面模式 | ✅ | ✅（推荐 systemd user 服务常驻） |
+
+### Linux 构建依赖（Manjaro / Arch）
+
+```bash
+sudo pacman -S --needed rust gtk3 libappindicator-gtk3 openssl pkgconf
+cargo build --release
+```
+
+GUI 依赖 Wayland 或 X11 会话；中文字体建议安装 `noto-fonts-cjk`。Debian/Ubuntu 系对应包为 `libgtk-3-dev libayatana-appindicator3-dev pkg-config libssl-dev`。
 
 ## 快速开始
 
@@ -107,7 +129,7 @@ curl -x socks5h://127.0.0.1:8888 https://www.google.com
 
 ## 系统代理
 
-设置页「通用」卡与托盘菜单均提供开关，状态跨重启保持：
+设置页「通用」卡与托盘菜单均提供开关，状态跨重启保持。Windows 与 Linux 的机制不同（见「平台支持」），Linux 侧写入的 environment.d 片段在下次登录时对 systemd 用户会话生效，已运行程序不受影响：
 
 - **开启**：将 WinINet 系统代理（`Internet Settings` 注册表键）指向监听地址并广播刷新，已运行程序立即生效；开启前的原值（ProxyEnable / ProxyServer / ProxyOverride / AutoConfigURL）快照至数据目录。
 - **绕过列表追加而非覆盖**：自动补充 `localhost;127.*;<local>`，用户自加条目原样保留。
@@ -118,7 +140,9 @@ curl -x socks5h://127.0.0.1:8888 https://www.google.com
 
 ## 开机启动
 
-设置页「开机启动」开关写入当前用户注册表 Run 键（`HKCU\Software\Microsoft\Windows\CurrentVersion\Run\proxyone`），无需管理员权限；登录时自动以 `--minimized` 启动并隐藏到托盘，代理直接可用。exe 移动位置或应用改名后，下次启动自动修正注册表中的路径（曾用名残留的旧值会被清理，开机启动意图自动迁移）。开关状态以注册表为准，GUI 每次启动时读取真实状态。
+设置页「开机启动」开关：Windows 写入当前用户注册表 Run 键（`HKCU\...\Run\proxyone`），Linux 写入 XDG autostart 桌面项（`~/.config/autostart/proxyone.desktop`），均无需管理员权限；登录时自动以 `--minimized` 启动并隐藏，代理直接可用。exe 移动位置、应用改名后，下次启动自动修正已保存的路径（曾用名残留会被清理，开机启动意图自动迁移）。开关状态以系统为准，GUI 每次启动时读取真实状态。
+
+> sway 注意：sway 本体不解析 XDG autostart 目录，需在 sway config 中加入 `exec dex -a`（或使用 systemd user 服务运行 `proxyone --headless`）。
 
 ## 自动更新
 
@@ -166,10 +190,11 @@ priority = 2
 
 ### 加载规则
 
-- 查找顺序：**exe 同目录（便携模式）→ `%LOCALAPPDATA%\proxyone` → 工作目录**；均不存在时自动生成于 `%LOCALAPPDATA%\proxyone\config.toml`。
-- exe 同目录存在 `config.toml` 时始终优先使用，便于便携携带；exe 位于 Program Files 等只读目录时依然可用。
-- 曾用名数据目录（`%LOCALAPPDATA%\failgate`）存在时会整体自动迁移。
-- 引擎日志落盘至 `%LOCALAPPDATA%\proxyone\logs\proxyone.log`，超过 5MB 自动轮转为 `proxyone.log.1`；设置页提供「打开日志目录」「打开配置所在目录」快捷入口。
+- **加载顺序**：查找 exe 同目录（便携模式）→ 用户配置目录 → 工作目录；均不存在时自动生成于用户配置目录。
+- exe 同目录存在 `config.toml` 时始终优先使用，便于便携携带；exe 位于只读目录时依然可用。
+- 用户配置目录：Windows 为 `%LOCALAPPDATA%\proxyone`，Linux 为 `$XDG_CONFIG_HOME/proxyone`（默认 `~/.config/proxyone`）；数据（状态文件、日志）目录：Windows 同上，Linux 为 `$XDG_DATA_HOME/proxyone`（默认 `~/.local/share/proxyone`）。
+- Windows 曾用名数据目录（`%LOCALAPPDATA%\failgate`）存在时会整体自动迁移。
+- 引擎日志落盘至 `<数据目录>/logs/proxyone.log`，超过 5MB 自动轮转为 `proxyone.log.1`；设置页提供「打开日志目录」「打开配置所在目录」快捷入口。
 
 ### 上游认证
 
@@ -237,6 +262,8 @@ cargo build --release
 ## 已知限制
 
 - 不代理 UDP（SOCKS5 仅支持 CONNECT，BIND / UDP ASSOCIATE 明确拒绝）
+- Linux 托盘图标暂未支持（阶段 3 计划，需 GTK 事件循环集成；当前 GUI 正常运行，仅无托盘）
+- Linux 系统代理为 environment.d 片段（下次登录生效），不支持已运行程序的即时接管
 - 入站侧 SOCKS5 仅支持无认证（仅监听回环地址，本地使用无需认证）
 - 健康检查 `test_url` 仅支持 `http://`（默认 generate_204 即为 http）
 - 纯 HTTP 转发强制 `Connection: close`（客户端每请求一条连接；浏览器与 WebSocket 不受影响，ws 走 CONNECT）

@@ -139,7 +139,14 @@ pub struct TrayHandle {
 }
 
 impl TrayHandle {
+    /// Linux 暂不启用托盘（AppIndicator 后端需要 GTK 事件循环集成，属阶段 3）。
+    /// 不用 `#[cfg]` 而用运行时 `cfg!` 判断：规避 rustc 1.95 deathness 分析
+    /// 在 cfg 属性组合下触发 ICE（slice index starts at 9 but ends at 8）。
     pub fn new(ctx: egui::Context) -> Result<Self> {
+        if !cfg!(windows) {
+            let _ = ctx;
+            anyhow::bail!("Linux 托盘将在后续版本支持");
+        }
         let icon_running = circle_icon(GREEN)?;
         let icon_stopped = circle_icon(GRAY)?;
         let icon_error = circle_icon(RED)?;

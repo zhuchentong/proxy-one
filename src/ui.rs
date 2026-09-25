@@ -205,6 +205,48 @@ pub(crate) fn renumber_priorities(rows: &mut [config::UpstreamConfig]) {
     }
 }
 
+/// 用文件管理器打开目录（Windows: explorer；Linux: xdg-open）。
+pub(crate) fn open_path(path: &std::path::Path) -> std::io::Result<()> {
+    #[cfg(windows)]
+    return std::process::Command::new("explorer.exe")
+        .arg(path)
+        .spawn()
+        .map(|_| ());
+    #[cfg(not(windows))]
+    return std::process::Command::new("xdg-open")
+        .arg(path)
+        .spawn()
+        .map(|_| ());
+}
+
+/// 用系统文本编辑器打开配置文件。
+pub(crate) fn edit_text_file(path: &std::path::Path) -> std::io::Result<()> {
+    #[cfg(windows)]
+    return std::process::Command::new("notepad.exe")
+        .arg(path)
+        .spawn()
+        .map(|_| ());
+    #[cfg(not(windows))]
+    return std::process::Command::new("xdg-open")
+        .arg(path)
+        .spawn()
+        .map(|_| ());
+}
+
+/// 在文件管理器中定位文件（Linux 退化为打开所在目录）。
+pub(crate) fn reveal_path(path: &std::path::Path) -> std::io::Result<()> {
+    #[cfg(windows)]
+    return std::process::Command::new("explorer.exe")
+        .arg(format!("/select,\"{}\"", path.display()))
+        .spawn()
+        .map(|_| ());
+    #[cfg(not(windows))]
+    return std::process::Command::new("xdg-open")
+        .arg(path.parent().unwrap_or(path))
+        .spawn()
+        .map(|_| ());
+}
+
 impl eframe::App for App {
     /// 窗口隐藏时依然被调用的回调：处理托盘消息与关闭拦截。
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -241,10 +283,7 @@ impl eframe::App for App {
                     }
                 }
                 TrayMsg::OpenConfig => {
-                    if let Err(e) = std::process::Command::new("notepad.exe")
-                        .arg(&self.cfg_path)
-                        .spawn()
-                    {
+                    if let Err(e) = edit_text_file(&self.cfg_path) {
                         self.notify((format!("打开配置文件失败: {e}"), theme::RED));
                     }
                 }

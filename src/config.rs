@@ -187,8 +187,10 @@ fn exe_dir() -> Option<PathBuf> {
         .and_then(|p| p.parent().map(Path::to_path_buf))
 }
 
-/// 用户级数据目录 `%LOCALAPPDATA%\proxyone`（exe 位于 Program Files 等只读
-/// 目录时，配置与日志的唯一可写落点）。
+/// 用户级数据目录（日志与状态文件）。
+/// Windows: `%LOCALAPPDATA%\proxyone`；Linux: `$XDG_DATA_HOME/proxyone`（默认 `~/.local/share`）。
+/// exe 位于 Program Files 等只读目录时，这是配置与日志的唯一可写落点。
+#[cfg(windows)]
 pub(crate) fn data_dir() -> Option<PathBuf> {
     std::env::var("LOCALAPPDATA")
         .ok()
@@ -197,7 +199,33 @@ pub(crate) fn data_dir() -> Option<PathBuf> {
         .map(|d| d.join("proxyone"))
 }
 
+#[cfg(not(windows))]
+pub(crate) fn data_dir() -> Option<PathBuf> {
+    xdg_base("XDG_DATA_HOME", ".local/share").map(|d| d.join("proxyone"))
+}
+
+/// Linux 用户配置目录 `$XDG_CONFIG_HOME/proxyone`（默认 `~/.config`）。
+#[cfg(not(windows))]
+fn config_dir() -> Option<PathBuf> {
+    xdg_base("XDG_CONFIG_HOME", ".config").map(|d| d.join("proxyone"))
+}
+
+#[cfg(not(windows))]
+fn xdg_base(var: &str, default_suffix: &str) -> Option<PathBuf> {
+    std::env::var(var)
+        .ok()
+        .filter(|d| !d.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var("HOME")
+                .ok()
+                .filter(|h| !h.is_empty())
+                .map(|h| PathBuf::from(h).join(default_suffix))
+        })
+}
+
 /// 曾用名数据目录 `%LOCALAPPDATA%\failgate`（仅迁移用）。
+#[cfg(windows)]
 fn legacy_data_dir() -> Option<PathBuf> {
     std::env::var("LOCALAPPDATA")
         .ok()
@@ -209,6 +237,7 @@ fn legacy_data_dir() -> Option<PathBuf> {
 /// 品牌更名的一次性迁移：目标目录不存在且旧目录存在时，把旧目录
 /// （config.toml、状态文件、日志）整体复制过来。复制而非移动——
 /// 旧日志文件可能被上一版本进程占用，移动会失败而复制总能成功。
+#[cfg(windows)]
 pub(crate) fn migrate_legacy_data_dir() {
     let (Some(new_dir), Some(old_dir)) = (data_dir(), legacy_data_dir()) else {
         return;
@@ -219,6 +248,10 @@ pub(crate) fn migrate_legacy_data_dir() {
     copy_tree(&old_dir, &new_dir);
 }
 
+#[cfg(not(windows))]
+pub(crate) fn migrate_legacy_data_dir() {}
+
+#[cfg(windows)]
 fn copy_tree(src: &Path, dst: &Path) {
     if !src.is_dir() {
         return;
@@ -237,20 +270,31 @@ fn copy_tree(src: &Path, dst: &Path) {
     }
 }
 
-/// 日志目录：`%LOCALAPPDATA%\proxyone\logs`。
+/// 日志目录：`<数据目录>/logs`。
 pub(crate) fn logs_dir() -> Option<PathBuf> {
     data_dir().map(|d| d.join("logs"))
 }
 
-/// 配置查找顺序：exe 同目录（便携模式）→ `%LOCALAPPDATA%\proxyone` → 工作目录。
-/// 都不存在时新配置写入 `%LOCALAPPDATA%`（exe 目录可能不可写）。
+/// 配置查找顺序：exe 同目录（便携模式）→ 用户配置目录 → 工作目录。
+/// Windows 用户配置目录 = `%LOCALAPPDATA%\proxyone`；
+/// Linux = `$XDG_CONFIG_HOME/proxyone`（默认 `~/.config`），数据目录再兜底。
 fn candidate_paths() -> Vec<PathBuf> {
     let mut v = Vec::new();
     if let Some(d) = exe_dir() {
         v.push(d.join("config.toml"));
     }
+    #[cfg(windows)]
     if let Some(d) = data_dir() {
         v.push(d.join("config.toml"));
+    }
+    #[cfg(not(windows))]
+    {
+        if let Some(d) = config_dir() {
+            v.push(d.join("config.toml"));
+        }
+        if let Some(d) = data_dir() {
+            v.push(d.join("config.toml"));
+        }
     }
     if let Ok(cwd) = std::env::current_dir() {
         v.push(cwd.join("config.toml"));
@@ -289,8 +333,18 @@ pub fn load_or_create() -> LoadedConfig {
             }
         }
     }
-    // 新配置默认写入 LOCALAPPDATA（兜底 exe 目录/工作目录），并预创建父目录
-    let target = data_dir()
+    // 新配置默认写入用户配置目录（兜底 exe 目录/工作目录），并预创建父目录
+    let preferred = {
+        #[cfg(windows)]
+        {
+            data_dir()
+        }
+        #[cfg(not(windows))]
+        {
+            config_dir().or_else(data_dir)
+        }
+    };
+    let target = preferred
         .map(|d| d.join("config.toml"))
         .or_else(|| candidates.first().cloned())
         .unwrap_or_else(|| PathBuf::from("config.toml"));

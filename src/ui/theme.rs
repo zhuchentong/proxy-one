@@ -96,13 +96,18 @@ pub fn apply_theme(ctx: &egui::Context, dark: bool) {
     });
 }
 
-/// 加载中文字体（微软雅黑 → 黑体 → 宋体），避免默认字体下的豆腐块。
+/// 加载中文字体（按平台探测常见 CJK 字体路径），避免默认字体下的豆腐块。
 pub fn install_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
+    // 跨平台探测链：Windows（雅黑/黑体/宋体）→ Linux（Noto CJK/文泉驿，Manjaro 装
+    // noto-fonts-cjk 即命中）。不存在的路径读取失败自动跳过。
     let candidates = [
         r"C:\Windows\Fonts\msyh.ttc",
         r"C:\Windows\Fonts\simhei.ttf",
         r"C:\Windows\Fonts\simsun.ttc",
+        "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/noto-cjk/NotoSansCJKsc-Regular.otf",
+        "/usr/share/fonts/wenquanyi/wqy-microhei/wqy-microhei.ttc",
     ];
     for path in candidates {
         if let Ok(bytes) = std::fs::read(path) {
