@@ -1,0 +1,14 @@
+/target
+
+# 用户真实配置（从仓库根运行 exe 时会自动生成）
+/config.toml
+
+# 本地辅助目录
+/.zcode/
+
+# 个人 cargo 镜像配置（属本机网络环境，不入库）
+/.cargo/
+
+# Windows 杂物
+Thumbs.db
+Desktop.ini
