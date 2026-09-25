@@ -18,16 +18,20 @@ sha2 = "0.10"
 thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "io-util", "sync", "macros", "signal"] }
 toml = "1"
-tray-icon = "0.25"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"
 windows-sys = { version = "0.61", features = ["Win32_Networking_WinInet"] }
+tray-icon = "0.25"
 
 # Linux 需要 x11/wayland 窗口后端（winit 默认无后端时报 platform not supported）；
 # 放在 target 段避免这些特性把 glow/glutin 依赖拖进 Windows 构建
 [target.'cfg(target_os = "linux")'.dependencies]
 eframe = { version = "0.36", default-features = false, features = ["x11", "wayland"] }
+# Linux 托盘仅要求编译通过（运行时降级跳过），关闭默认特性避免拖入
+# libappindicator / libxdo 的系统库构建依赖（多数发行版桌面环境并不预装）；
+# ksni 走纯 Rust zbus 的 D-Bus SNI，muda-gtk3 提供 menu 类型的编译后端
+tray-icon = { version = "0.25", default-features = false, features = ["muda-gtk3", "ksni"] }
 
 [profile.release]
 lto = "thin"
