@@ -1,9 +1,9 @@
 //! 自动更新：GitHub Releases 版本检查、经网关优先的下载与原子替换。
 //!
 //! - 更新源 = `CARGO_PKG_REPOSITORY` 指向仓库的 latest release（不含预发布），
-//!   资产为裸 `proxyone.exe` + `proxyone.exe.sha256`（见 .github/workflows/ci.yml）。
-//! - HTTPS 走 native-tls（Windows 落到 schannel，证书校验用系统信任库），
-//!   请求为手写 HTTP/1.1，与 engine 的风格一致，无 C 构建依赖。
+//!   资产为裸 `proxyone.exe` / `proxyone-linux-x64` + 对应 `.sha256`
+//!   （见 .github/workflows/ci.yml）。
+//! - HTTPS 走 [`crate::httpc`]（native-tls，证书校验用系统信任库）。
 //! - 下载通道优先经本网关自身（享受上游故障切换），失败回退直连。
 //! - 替换利用「Windows 允许改名运行中的 exe」：校验通过的字节先写成
 //!   `<exe>.new`，再 当前 exe → `.old`、`.new` → 当前名、分离重启；
@@ -12,11 +12,10 @@
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::io::{Read, Write};
-use std::net::{TcpStream, ToSocketAddrs};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+
+use crate::httpc::get_follow;
 
 /// 自动检查节流：GitHub 未认证限额 60 次/时/IP，24h 一次绰绰有余
 pub(crate) const CHECK_INTERVAL_SECS: u64 = 24 * 3600;
@@ -30,9 +29,6 @@ const SHA_ASSET: &str = "proxyone.exe.sha256";
 const EXE_ASSET: &str = "proxyone-linux-x64";
 #[cfg(not(windows))]
 const SHA_ASSET: &str = "proxyone-linux-x64.sha256";
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-const RW_TIMEOUT: Duration = Duration::from_secs(30);
-const MAX_BODY: usize = 64 * 1024 * 1024;
 
 // ---------- 版本比较 ----------
 
@@ -262,6 +258,7 @@ pub(crate) fn cleanup_stale() {
 }
 
 // ---------- 检查状态（节流与版本变化提示） ----------
+// （最小 HTTPS 客户端已拆至 crate::httpc）
 
 #[derive(Serialize, Deserialize, Default)]
 struct UpdateState {
@@ -272,7 +269,7 @@ struct UpdateState {
 }
 
 fn state_path() -> Option<PathBuf> {
-    crate::config::data_dir().map(|d| d.join("update-state.toml"))
+    crate::platform::dirs::data_dir().map(|d| d.join("update-state.toml"))
 }
 
 fn load_state() -> UpdateState {
@@ -318,148 +315,6 @@ pub(crate) fn take_version_change() -> Option<String> {
     st.last_version = CURRENT_VERSION.to_string();
     save_state(&st);
     (!prev.is_empty() && prev != CURRENT_VERSION).then_some(prev)
-}
-
-// ---------- 最小 HTTPS 客户端 ----------
-
-fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
-    hay.windows(needle.len()).position(|w| w == needle)
-}
-
-fn parse_https_url(url: &str) -> Result<(String, String)> {
-    let rest = url
-        .strip_prefix("https://")
-        .ok_or_else(|| anyhow!("仅支持 https URL：{url}"))?;
-    let (host, path) = rest.split_once('/').unwrap_or((rest, ""));
-    if host.is_empty() {
-        bail!("URL 缺少主机：{url}");
-    }
-    Ok((host.to_string(), format!("/{path}")))
-}
-
-/// 经网关建立 CONNECT 隧道（updater 的下载通道，与验证探针同款握手）
-fn connect_via_gateway(gateway: &str, host: &str) -> Result<TcpStream> {
-    let mut s = TcpStream::connect(gateway).with_context(|| format!("连接网关 {gateway} 失败"))?;
-    s.set_read_timeout(Some(RW_TIMEOUT))?;
-    s.set_write_timeout(Some(RW_TIMEOUT))?;
-    let req = format!("CONNECT {host}:443 HTTP/1.1\r\nHost: {host}:443\r\n\r\n");
-    s.write_all(req.as_bytes())?;
-    let mut head = Vec::new();
-    let mut buf = [0u8; 4096];
-    loop {
-        let n = s.read(&mut buf)?;
-        if n == 0 {
-            bail!("网关在 CONNECT 阶段关闭了连接");
-        }
-        head.extend_from_slice(&buf[..n]);
-        if let Some(p) = find(&head, b"\r\n\r\n") {
-            let line = String::from_utf8_lossy(&head[..p])
-                .lines()
-                .next()
-                .unwrap_or("")
-                .to_string();
-            if !line.contains(" 200") {
-                bail!("网关拒绝 CONNECT：{line}");
-            }
-            if head.len() > p + 4 {
-                bail!("隧道内出现意外数据");
-            }
-            return Ok(s);
-        }
-        if head.len() > 16 * 1024 {
-            bail!("CONNECT 响应头过大");
-        }
-    }
-}
-
-fn connect_direct(host: &str) -> Result<TcpStream> {
-    let addr = (host, 443u16)
-        .to_socket_addrs()
-        .with_context(|| format!("DNS 解析失败：{host}"))?
-        .next()
-        .ok_or_else(|| anyhow!("DNS 解析为空：{host}"))?;
-    let s = TcpStream::connect_timeout(&addr, CONNECT_TIMEOUT)
-        .with_context(|| format!("连接 {host} 失败"))?;
-    s.set_read_timeout(Some(RW_TIMEOUT))?;
-    s.set_write_timeout(Some(RW_TIMEOUT))?;
-    Ok(s)
-}
-
-/// HTTP 响应：(状态码, 头部键值对（键已小写）, 响应体)
-type Response = (u32, Vec<(String, String)>, Vec<u8>);
-
-/// 最小 HTTPS GET：跟随最多 3 次 30x；progress 按读块刷新（每跳开始时清零）
-fn get_follow(
-    gateway: Option<&str>,
-    url: &str,
-    extra_headers: &str,
-    progress: Option<&AtomicU64>,
-) -> Result<Response> {
-    let mut url = url.to_string();
-    for _ in 0..3 {
-        let (host, path) = parse_https_url(&url)?;
-        let tcp = match gateway {
-            Some(g) => connect_via_gateway(g, &host)?,
-            None => connect_direct(&host)?,
-        };
-        let conn = native_tls::TlsConnector::builder()
-            .build()
-            .context("构建 TLS 连接器失败")?;
-        let mut tls = conn
-            .connect(&host, tcp)
-            .with_context(|| format!("TLS 握手失败：{host}"))?;
-        let req = format!(
-            "GET {path} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: proxyone/{CURRENT_VERSION}\r\n{extra_headers}Connection: close\r\n\r\n"
-        );
-        tls.write_all(req.as_bytes())?;
-        if let Some(p) = progress {
-            p.store(0, Ordering::Relaxed);
-        }
-        let mut resp = Vec::new();
-        let mut buf = [0u8; 64 * 1024];
-        loop {
-            match tls.read(&mut buf) {
-                Ok(0) => break,
-                Ok(n) => {
-                    resp.extend_from_slice(&buf[..n]);
-                    if let Some(p) = progress {
-                        p.fetch_add(n as u64, Ordering::Relaxed);
-                    }
-                }
-                Err(e) => return Err(anyhow!(e)).context("读取响应失败"),
-            }
-            if resp.len() > MAX_BODY {
-                bail!("响应超过大小上限");
-            }
-        }
-        drop(tls);
-        let hp = find(&resp, b"\r\n\r\n").ok_or_else(|| anyhow!("响应缺少头部结束标记"))?;
-        let head = String::from_utf8_lossy(&resp[..hp]);
-        let status: u32 = head
-            .lines()
-            .next()
-            .unwrap_or("")
-            .split_whitespace()
-            .nth(1)
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0);
-        let headers: Vec<(String, String)> = head
-            .lines()
-            .skip(1)
-            .filter_map(|l| l.split_once(':'))
-            .map(|(k, v)| (k.trim().to_ascii_lowercase(), v.trim().to_string()))
-            .collect();
-        if (300..400).contains(&status) {
-            url = headers
-                .iter()
-                .find(|(k, _)| k == "location")
-                .map(|(_, v)| v.clone())
-                .ok_or_else(|| anyhow!("重定向缺少 Location"))?;
-            continue;
-        }
-        return Ok((status, headers, resp[hp + 4..].to_vec()));
-    }
-    bail!("重定向次数过多")
 }
 
 #[cfg(test)]

@@ -220,20 +220,29 @@ priority = 2
 src/
   main.rs            入口：CLI 参数（--headless / --minimized / --updated）、GUI 与 headless 启动
   config.rs          TOML 配置模型与加载/保存（带默认值回退与单元测试）
-  autostart_windows.rs  开机启动（Windows）：HKCU Run 注册表读写 + 路径自愈与改名迁移
-  autostart_linux.rs    开机启动（Linux）：XDG autostart 桌面项
-  sysproxy_windows.rs   系统代理（Windows）：WinINet 注册表 + 快照恢复/崩溃自愈/冲突保护
-  sysproxy_linux.rs     系统代理（Linux）：environment.d 片段写入
+  httpc.rs           最小 HTTPS 客户端（native-tls，支持经网关 CONNECT 隧道）
+  util.rs            通用小工具（字节数人性化展示等）
   update.rs          自动更新：GitHub Releases 检查、经网关优先下载、原子替换
-  tray.rs            托盘图标/菜单（程序化生成三态图标；Windows 实装，Linux 跳过并记日志）
+  platform/          平台抽象层：业务层只面向统一 API，平台差异不出本层
+    mod.rs           模块开关：autostart / sysproxy 按 #[cfg] + #[path] 文件对切换
+    dirs.rs          用户数据/配置目录与 XDG 基目录解析
+    desktop.rs       桌面互操作：文件管理器/文本编辑器打开路径
+    autostart_windows.rs  开机启动（Windows）：HKCU Run 注册表读写 + 路径自愈与改名迁移
+    autostart_linux.rs    开机启动（Linux）：XDG autostart 桌面项
+    sysproxy_windows.rs   系统代理（Windows）：WinINet 注册表 + 快照恢复/崩溃自愈/冲突保护
+    sysproxy_linux.rs     系统代理（Linux）：environment.d 片段写入
+    tray.rs           托盘：三态图标/右键菜单（Windows 实装，Linux 运行时降级）
   ui/
     ui.rs            App 状态与 eframe 编排（logic 托盘/关闭拦截 + 布局）
+    update_flow.rs   自动更新的 UI 编排：检查/下载后台线程与状态机
+    cards.rs         主界面视图与卡片：状态卡 / 上游卡 / 添加 / 日志 / 页脚
+    settings.rs      独立设置页：通用 / 健康检查 / 关于与更新
     theme.rs         明暗两套配色、Visuals 定制、中文字体加载
-    widgets.rs       基础组件：卡片、胶囊徽章、拨动开关、日志着色
-    cards.rs         各视图与卡片渲染：状态卡 / 上游卡 / 添加 / 独立设置页 / 日志 / 页脚
+    widgets.rs       基础组件：卡片、胶囊徽章、拨动开关、按钮、日志着色
   engine/
     handle.rs        引擎生命周期（后台线程 + tokio runtime、启停控制）
     state.rs         共享状态：快照、200 条日志环、EngineCtx
+    filelog.rs       日志落盘：追加写 + 5MB 轮转
     server.rs        入站监听 + 首字节协议嗅探（0x05 SOCKS5 / HTTP / 0x04 拒绝）
     http.rs          入站 HTTP：CONNECT 隧道、绝对 URI 改写、hop-by-hop 剥离
     socks5.rs        入站 SOCKS5：无认证握手 + CONNECT

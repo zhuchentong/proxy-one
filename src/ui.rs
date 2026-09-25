@@ -4,19 +4,22 @@
 //! 主题配色见 [`theme`]，基础控件见 [`widgets`]。
 
 mod cards;
+mod settings;
 mod theme;
+mod update_flow;
 pub(crate) mod widgets;
 
 use eframe::egui;
 
 use crate::config;
 use crate::engine::EngineHandle;
-use crate::tray::{TrayHandle, TrayMsg};
+use crate::platform::tray::{TrayHandle, TrayMsg};
 
 pub use theme::{apply_theme, install_fonts};
 
 use cards::RowAction;
 use theme::palette;
+use update_flow::UpdateUi;
 
 pub struct App {
     pub(crate) engine: EngineHandle,
@@ -53,15 +56,6 @@ pub struct App {
     pub(crate) update_manual: bool,
 }
 
-/// 更新流程的 UI 状态（与后台线程事件共同驱动）
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum UpdateUi {
-    Idle,
-    Checking,
-    Downloading,
-    Ready,
-}
-
 impl App {
     pub fn new(loaded: config::LoadedConfig) -> Self {
         let dark = loaded.config.general.theme != "light";
@@ -81,7 +75,7 @@ impl App {
             new_kind: config::UpstreamKind::Auto,
             new_top: false,
             pending_action: None,
-            autostart: crate::autostart::is_enabled(),
+            autostart: crate::platform::autostart::is_enabled(),
             log_expanded: false,
             dirty: false,
             msg: None,
@@ -99,12 +93,12 @@ impl App {
             update_manual: false,
         };
         // 上次异常退出可能留下指向自己的系统代理：先恢复，再由同步逻辑按意图重开
-        crate::sysproxy::restore_pending(&app.cfg.general.listen);
+        crate::platform::sysproxy::restore_pending(&app.cfg.general.listen);
         app.engine.start(app.cfg.clone());
         // 改名前残留的注册表旧值清理；exe 被移动/重命名后修正残留的旧路径
-        crate::autostart::remove_legacy();
-        if crate::autostart::is_enabled() && crate::autostart::stale() {
-            let _ = crate::autostart::set_enabled(true);
+        crate::platform::autostart::remove_legacy();
+        if crate::platform::autostart::is_enabled() && crate::platform::autostart::stale() {
+            let _ = crate::platform::autostart::set_enabled(true);
         }
         // 上一代替换残留（.old/.new）清理；版本变化则提示「已更新」
         crate::update::cleanup_stale();
@@ -158,7 +152,7 @@ impl App {
     }
 
     pub(crate) fn set_autostart(&mut self, enable: bool) {
-        match crate::autostart::set_enabled(enable) {
+        match crate::platform::autostart::set_enabled(enable) {
             Ok(()) => {
                 self.autostart = enable;
                 self.notify((
@@ -171,7 +165,7 @@ impl App {
                 ));
             }
             Err(e) => {
-                self.autostart = crate::autostart::is_enabled();
+                self.autostart = crate::platform::autostart::is_enabled();
                 self.notify((format!("开机启动设置失败: {e:#}"), theme::RED));
             }
         }
@@ -203,48 +197,6 @@ pub(crate) fn renumber_priorities(rows: &mut [config::UpstreamConfig]) {
     for (idx, r) in rows.iter_mut().enumerate() {
         r.priority = (idx + 1) as i32;
     }
-}
-
-/// 用文件管理器打开目录（Windows: explorer；Linux: xdg-open）。
-pub(crate) fn open_path(path: &std::path::Path) -> std::io::Result<()> {
-    #[cfg(windows)]
-    return std::process::Command::new("explorer.exe")
-        .arg(path)
-        .spawn()
-        .map(|_| ());
-    #[cfg(not(windows))]
-    return std::process::Command::new("xdg-open")
-        .arg(path)
-        .spawn()
-        .map(|_| ());
-}
-
-/// 用系统文本编辑器打开配置文件。
-pub(crate) fn edit_text_file(path: &std::path::Path) -> std::io::Result<()> {
-    #[cfg(windows)]
-    return std::process::Command::new("notepad.exe")
-        .arg(path)
-        .spawn()
-        .map(|_| ());
-    #[cfg(not(windows))]
-    return std::process::Command::new("xdg-open")
-        .arg(path)
-        .spawn()
-        .map(|_| ());
-}
-
-/// 在文件管理器中定位文件（Linux 退化为打开所在目录）。
-pub(crate) fn reveal_path(path: &std::path::Path) -> std::io::Result<()> {
-    #[cfg(windows)]
-    return std::process::Command::new("explorer.exe")
-        .arg(format!("/select,\"{}\"", path.display()))
-        .spawn()
-        .map(|_| ());
-    #[cfg(not(windows))]
-    return std::process::Command::new("xdg-open")
-        .arg(path.parent().unwrap_or(path))
-        .spawn()
-        .map(|_| ());
 }
 
 impl eframe::App for App {
@@ -283,14 +235,14 @@ impl eframe::App for App {
                     }
                 }
                 TrayMsg::OpenConfig => {
-                    if let Err(e) = edit_text_file(&self.cfg_path) {
+                    if let Err(e) = crate::platform::desktop::edit_text_file(&self.cfg_path) {
                         self.notify((format!("打开配置文件失败: {e}"), theme::RED));
                     }
                 }
                 TrayMsg::Quit => {
                     self.exiting = true;
                     // 退出前恢复系统代理，避免留下指向死端口的代理
-                    if let Err(e) = crate::sysproxy::disable(&self.cfg.general.listen) {
+                    if let Err(e) = crate::platform::sysproxy::disable(&self.cfg.general.listen) {
                         eprintln!("退出恢复系统代理失败: {e:#}");
                     }
                     self.engine.stop();
@@ -327,41 +279,7 @@ impl eframe::App for App {
             self.sync_sysproxy();
         }
         // 更新事件：Checked 只在手动检查时提示失败/无更新，自动检查保持静默
-        while let Ok(m) = self.update_rx.try_recv() {
-            let manual = self.update_manual;
-            match m {
-                crate::update::Msg::Checked(Ok(Some(rel))) => {
-                    self.update_ui = UpdateUi::Idle;
-                    let tag = rel.tag.clone();
-                    self.update_pending = Some(rel);
-                    self.notify((format!("发现新版本 {tag}，可在设置页更新"), theme::GREEN));
-                }
-                crate::update::Msg::Checked(Ok(None)) => {
-                    self.update_ui = UpdateUi::Idle;
-                    self.update_pending = None;
-                    if manual {
-                        self.notify((
-                            format!("已是最新版本 v{}", crate::update::CURRENT_VERSION),
-                            theme::GREEN,
-                        ));
-                    }
-                }
-                crate::update::Msg::Checked(Err(e)) => {
-                    self.update_ui = UpdateUi::Idle;
-                    if manual {
-                        self.notify((format!("检查更新失败: {e:#}"), theme::ORANGE));
-                    }
-                }
-                crate::update::Msg::Ready(Ok(tag)) => {
-                    self.update_ui = UpdateUi::Ready;
-                    self.notify((format!("v{tag} 已下载就绪，重启后生效"), theme::GREEN));
-                }
-                crate::update::Msg::Ready(Err(e)) => {
-                    self.update_ui = UpdateUi::Idle;
-                    self.notify((format!("下载更新失败: {e:#}"), theme::RED));
-                }
-            }
-        }
+        self.drain_update_events();
         // 检查/下载进行中提高重绘频率，让进度条与转圈动画流动
         if self.update_ui == UpdateUi::Checking || self.update_ui == UpdateUi::Downloading {
             ctx.request_repaint_after(std::time::Duration::from_millis(200));
@@ -400,91 +318,6 @@ impl App {
     /// main_view 与 settings_view 共用，保证按钮与窗口下边缘保持呼吸空间。
     pub(crate) const FOOTER_H: f32 = 36.0;
 
-    /// 下载通道：引擎运行时优先经本网关自身（享受上游故障切换），否则直连
-    fn update_gateway(&self) -> Option<String> {
-        if self.engine.is_running() {
-            // listen 形如 "127.0.0.1:8888" / "0.0.0.0:8888"，回环访问只取端口
-            self.cfg
-                .general
-                .listen
-                .rsplit_once(':')
-                .map(|(_, port)| format!("127.0.0.1:{port}"))
-        } else {
-            None
-        }
-    }
-
-    /// 触发一次版本检查（manual=false 为启动静默检查，失败不打扰用户）
-    pub(crate) fn check_updates(&mut self, manual: bool) {
-        if self.update_ui == UpdateUi::Checking || self.update_ui == UpdateUi::Downloading {
-            return;
-        }
-        self.update_ui = UpdateUi::Checking;
-        self.update_manual = manual;
-        let tx = self.update_tx.clone();
-        let gateway = self.update_gateway();
-        let spawned = std::thread::Builder::new()
-            .name("proxyone-update".into())
-            .spawn(move || {
-                let res = crate::update::latest_release(gateway.as_deref())
-                    .map(|opt| opt.filter(|r| crate::update::is_newer(&r.tag)));
-                if res.is_ok() {
-                    crate::update::mark_checked();
-                }
-                let _ = tx.send(crate::update::Msg::Checked(res));
-            });
-        if let Err(e) = spawned {
-            self.update_ui = UpdateUi::Idle;
-            self.notify((format!("无法启动检查线程: {e}"), theme::RED));
-        }
-    }
-
-    /// 下载已发现的新版本：经网关优先，失败自动回退直连
-    pub(crate) fn start_download(&mut self) {
-        let Some(rel) = self.update_pending.clone() else {
-            return;
-        };
-        self.update_ui = UpdateUi::Downloading;
-        let tx = self.update_tx.clone();
-        let progress = self.update_progress.clone();
-        let gateway = self.update_gateway();
-        let spawned = std::thread::Builder::new()
-            .name("proxyone-update".into())
-            .spawn(move || {
-                let result = if let Some(g) = &gateway {
-                    crate::update::download(Some(g), &rel, &progress).or_else(|e| {
-                        eprintln!("经网关 {g} 下载失败，回退直连: {e:#}");
-                        crate::update::download(None, &rel, &progress)
-                    })
-                } else {
-                    crate::update::download(None, &rel, &progress)
-                };
-                let _ = tx.send(crate::update::Msg::Ready(result));
-            });
-        if let Err(e) = spawned {
-            self.update_ui = UpdateUi::Idle;
-            self.notify((format!("无法启动下载线程: {e}"), theme::RED));
-        }
-    }
-
-    /// 应用更新：恢复系统代理 → 停引擎 → 原子替换并分离启动新版本 → 退出。
-    /// 新实例带 --updated 延迟绑定端口；系统代理与引擎由新实例按持久化意图恢复。
-    pub(crate) fn finish_update(&mut self, ctx: &egui::Context) {
-        if let Err(e) = crate::sysproxy::disable(&self.cfg.general.listen) {
-            eprintln!("更新前恢复系统代理失败: {e:#}");
-        }
-        self.engine.stop();
-        if let Err(e) = crate::update::install() {
-            // 替换失败：把引擎拉起来保住网关
-            let cfg = self.cfg.clone();
-            self.engine.start(cfg);
-            self.notify((format!("应用更新失败: {e:#}"), theme::RED));
-            return;
-        }
-        self.exiting = true;
-        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-    }
-
     /// 系统代理开关：仅引擎运行时可开启；意图持久化到 config。
     fn set_sysproxy(&mut self, on: bool) {
         if on && !self.engine.is_running() {
@@ -493,9 +326,9 @@ impl App {
         }
         let listen = self.cfg.general.listen.clone();
         let result = if on {
-            crate::sysproxy::enable(&listen)
+            crate::platform::sysproxy::enable(&listen)
         } else {
-            crate::sysproxy::disable(&listen)
+            crate::platform::sysproxy::disable(&listen)
         };
         match result {
             Ok(()) => {
@@ -529,9 +362,9 @@ impl App {
     fn sync_sysproxy(&mut self) {
         let listen = self.cfg.general.listen.clone();
         let desired = self.sysproxy_on && self.engine.is_running();
-        match (desired, crate::sysproxy::is_active(&listen)) {
+        match (desired, crate::platform::sysproxy::is_active(&listen)) {
             (true, false) => {
-                if crate::sysproxy::has_snapshot() {
+                if crate::platform::sysproxy::has_snapshot() {
                     self.sysproxy_on = false;
                     self.cfg.general.sysproxy = false;
                     let _ = config::save(&self.cfg_path, &self.cfg);
@@ -539,12 +372,12 @@ impl App {
                         "系统代理已被其他程序接管，已自动关闭系统代理开关".into(),
                         theme::ORANGE,
                     ));
-                } else if let Err(e) = crate::sysproxy::enable(&listen) {
+                } else if let Err(e) = crate::platform::sysproxy::enable(&listen) {
                     self.notify((format!("开启系统代理失败: {e:#}"), theme::RED));
                 }
             }
             (false, true) => {
-                if let Err(e) = crate::sysproxy::disable(&listen) {
+                if let Err(e) = crate::platform::sysproxy::disable(&listen) {
                     self.notify((format!("恢复系统代理失败: {e:#}"), theme::RED));
                 }
             }

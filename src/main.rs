@@ -2,23 +2,13 @@
 
 //! 代理故障切换网关：混合 HTTP/SOCKS5 入口 + 多上游优先级故障切换 + egui GUI。
 
-#[cfg(windows)]
-#[path = "autostart_windows.rs"]
-mod autostart;
-#[cfg(not(windows))]
-#[path = "autostart_linux.rs"]
-mod autostart;
 mod config;
 mod engine;
-#[cfg(windows)]
-#[path = "sysproxy_windows.rs"]
-mod sysproxy;
-#[cfg(not(windows))]
-#[path = "sysproxy_linux.rs"]
-mod sysproxy;
-mod tray;
+mod httpc;
+mod platform;
 mod ui;
 mod update;
+mod util;
 
 use config::LoadedConfig;
 
@@ -61,7 +51,7 @@ fn run_gui(loaded: LoadedConfig, dark: bool, minimized: bool) -> eframe::Result<
             .with_icon(eframe::egui::IconData {
                 width: 32,
                 height: 32,
-                rgba: tray::app_icon_rgba(),
+                rgba: platform::tray::app_icon_rgba(),
             }),
         ..Default::default()
     };
@@ -72,7 +62,7 @@ fn run_gui(loaded: LoadedConfig, dark: bool, minimized: bool) -> eframe::Result<
             ui::install_fonts(&cc.egui_ctx);
             ui::apply_theme(&cc.egui_ctx, dark);
             let mut app = ui::App::new(loaded);
-            match tray::TrayHandle::new(cc.egui_ctx.clone()) {
+            match platform::tray::TrayHandle::new(cc.egui_ctx.clone()) {
                 Ok(t) => app.set_tray(t),
                 Err(e) => eprintln!("托盘初始化失败: {e:#}"),
             }

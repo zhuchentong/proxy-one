@@ -48,7 +48,7 @@ fn inet_key(writable: bool) -> Result<RegKey> {
 }
 
 fn snapshot_path() -> Option<PathBuf> {
-    crate::config::data_dir().map(|d| d.join("sysproxy-state.toml"))
+    crate::platform::dirs::data_dir().map(|d| d.join("sysproxy-state.toml"))
 }
 
 fn load_snapshot() -> Option<Snapshot> {

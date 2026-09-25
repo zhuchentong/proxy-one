@@ -9,6 +9,7 @@
 //! [`handle::EngineHandle`] 负责后台线程与 runtime 的启停控制。
 
 pub mod b64;
+pub mod filelog;
 pub mod handle;
 pub mod health;
 pub mod http;

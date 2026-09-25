@@ -220,20 +220,29 @@ priority = 2
 src/
   main.rs               Entry: CLI args (--headless / --minimized / --updated), GUI & headless startup
   config.rs             TOML config model, load/save (defaults fallback + unit tests)
-  autostart_windows.rs  Run at login (Windows): HKCU Run registry + path self-healing & rename migration
-  autostart_linux.rs    Run at login (Linux): XDG autostart desktop entry
-  sysproxy_windows.rs   System proxy (Windows): WinINet registry + snapshot/crash-healing/conflict protection
-  sysproxy_linux.rs     System proxy (Linux): environment.d snippet
+  httpc.rs              Minimal HTTPS client (native-tls, CONNECT tunnel via the gateway)
+  util.rs               Small utilities (human-readable byte formatting, etc.)
   update.rs             Auto-update: GitHub Releases check, gateway-first download, atomic replacement
-  tray.rs               Tray icon/menu (programmatically drawn three-state icons; Windows only, Linux logs & skips)
+  platform/             Platform layer: business code targets one API; platform details stay here
+    mod.rs              Module switch: autostart / sysproxy via #[cfg] + #[path] file pairs
+    dirs.rs             User data/config directories & XDG base-dir resolution
+    desktop.rs          Desktop interop: open paths in file manager / text editor
+    autostart_windows.rs  Run at login (Windows): HKCU Run registry + path self-healing & rename migration
+    autostart_linux.rs    Run at login (Linux): XDG autostart desktop entry
+    sysproxy_windows.rs   System proxy (Windows): WinINet registry + snapshot/crash-healing/conflict protection
+    sysproxy_linux.rs     System proxy (Linux): environment.d snippet
+    tray.rs             Tray: three-state icon / context menu (Windows live, Linux degrades at runtime)
   ui/
     ui.rs               App state & eframe orchestration (logic: tray/close interception + layout)
+    update_flow.rs      Update UI orchestration: check/download threads & state machine
+    cards.rs            Main view & cards: status / upstream / add / logs / footer
+    settings.rs         Settings page: general / health check / about & updates
     theme.rs            Dark/light palettes, Visuals tuning, CJK font loading
-    widgets.rs          Basic widgets: cards, pill badges, toggle switch, log coloring
-    cards.rs            Views & cards: status / upstream / add / settings page / logs / footer
+    widgets.rs          Basic widgets: cards, pill badges, toggle switch, buttons, log coloring
   engine/
     handle.rs           Engine lifecycle (background thread + tokio runtime, start/stop)
     state.rs            Shared state: snapshot, 200-entry log ring, EngineCtx
+    filelog.rs          Log persistence: append + 5 MB rotation
     server.rs           Inbound listener + first-byte protocol sniffing (0x05 SOCKS5 / HTTP / 0x04 rejected)
     http.rs             Inbound HTTP: CONNECT tunnels, absolute-URI rewrite, hop-by-hop stripping
     socks5.rs           Inbound SOCKS5: no-auth handshake + CONNECT

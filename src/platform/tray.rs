@@ -3,6 +3,11 @@
 //! 右键菜单除操作项外，还以禁用项的形式展示引擎状态、当前上游与各上游的
 //! 健康/延迟/流量信息；信息行由 [`TrayHandle::sync_snapshot`] 每帧刷新，
 //! 上游子菜单仅在内容签名变化时重建，避免频繁增删原生菜单项。
+//!
+//! ℹ 本模块刻意保持单文件、无 `#[cfg]`：rustc 1.95 的 deathness 分析对
+//! 「按 cfg 切换的托盘模块对」（无论自包含还是共享/re-export 形态）都会
+//! ICE（check_mod_deathness，详见 platform/mod.rs 顶部说明），因此 Linux
+//! 侧仍编译完整托盘代码、仅运行时降级跳过。待工具链修复后可再拆分。
 
 use std::sync::mpsc::Receiver;
 
@@ -11,7 +16,7 @@ use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuIt
 use tray_icon::{Icon, MouseButton, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
 use crate::engine::{HealthStatus, Phase, Snapshot, UpstreamState};
-use crate::ui::widgets::fmt_bytes;
+use crate::util::fmt_bytes;
 
 pub enum TrayMsg {
     ShowWindow,
@@ -26,6 +31,7 @@ const GREEN: [u8; 3] = [0x3f, 0xc1, 0x7a];
 const GRAY: [u8; 3] = [0x8a, 0x8a, 0x8a];
 const RED: [u8; 3] = [0xe0, 0x60, 0x5d];
 
+/// 生成 32×32 的实心圆点 RGBA（边缘半速抗锯齿），托盘与窗口图标共用。
 fn circle_rgba(rgb: [u8; 3]) -> Vec<u8> {
     let s = 32usize;
     let c = (s as f32 - 1.0) / 2.0;
@@ -51,6 +57,7 @@ fn circle_icon(rgb: [u8; 3]) -> Result<Icon> {
     Icon::from_rgba(rgba, 32, 32).context("托盘图标创建失败")
 }
 
+/// 窗口图标（GUI 启动时使用，全平台可用）。
 pub fn app_icon_rgba() -> Vec<u8> {
     circle_rgba(GREEN)
 }
@@ -139,13 +146,12 @@ pub struct TrayHandle {
 }
 
 impl TrayHandle {
-    /// Linux 暂不启用托盘（AppIndicator 后端需要 GTK 事件循环集成，属阶段 3）。
-    /// 不用 `#[cfg]` 而用运行时 `cfg!` 判断：规避 rustc 1.95 deathness 分析
-    /// 在 cfg 属性组合下触发 ICE（slice index starts at 9 but ends at 8）。
+    /// Linux 暂不启用托盘（KSNI 属后续阶段）。不用 `#[cfg]` 而用运行时
+    /// `cfg!` 判断：规避 rustc 1.95 deathness ICE（见文件头与 platform/mod.rs）。
     pub fn new(ctx: egui::Context) -> Result<Self> {
         if !cfg!(windows) {
             let _ = ctx;
-            anyhow::bail!("Linux 托盘将在后续版本支持");
+            anyhow::bail!("Linux 托盘将在后续版本支持（KSNI 计划中）");
         }
         let icon_running = circle_icon(GREEN)?;
         let icon_stopped = circle_icon(GRAY)?;
@@ -348,6 +354,15 @@ mod tests {
             active: active.map(|s| s.to_string()),
             logs: Vec::new(),
         }
+    }
+
+    #[test]
+    fn circle_rgba_dims_and_alpha_layout() {
+        let rgba = circle_rgba(GREEN);
+        assert_eq!(rgba.len(), 32 * 32 * 4);
+        // 中心不透明，四角透明
+        assert_eq!(rgba[16 * 32 * 4 + 16 * 4 + 3], 255);
+        assert_eq!(rgba[3], 0);
     }
 
     #[test]

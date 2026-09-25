@@ -17,17 +17,11 @@ use std::path::PathBuf;
 const FILE_NAME: &str = "proxyone.conf";
 
 fn file_path() -> Option<PathBuf> {
-    let base = std::env::var("XDG_CONFIG_HOME")
-        .ok()
-        .filter(|d| !d.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var("HOME")
-                .ok()
-                .filter(|h| !h.is_empty())
-                .map(|h| PathBuf::from(h).join(".config"))
-        })?;
-    Some(base.join("environment.d").join(FILE_NAME))
+    Some(
+        super::dirs::xdg_config_home()?
+            .join("environment.d")
+            .join(FILE_NAME),
+    )
 }
 
 fn content(listen: &str) -> String {

@@ -12,17 +12,7 @@ const FILE_NAME: &str = "proxyone.desktop";
 const LEGACY_FILE_NAME: &str = "failgate.desktop";
 
 fn autostart_dir() -> Option<PathBuf> {
-    let base = std::env::var("XDG_CONFIG_HOME")
-        .ok()
-        .filter(|d| !d.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var("HOME")
-                .ok()
-                .filter(|h| !h.is_empty())
-                .map(|h| PathBuf::from(h).join(".config"))
-        })?;
-    Some(base.join("autostart"))
+    super::dirs::xdg_config_home().map(|base| base.join("autostart"))
 }
 
 fn file_path() -> Option<PathBuf> {
