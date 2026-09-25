@@ -14,7 +14,7 @@ use crate::config::Config;
 use super::upstream::ResolvedKind;
 
 const LOG_CAP: usize = 200;
-/// 日志文件轮转阈值：超过后 `failgate.log` 改名为 `failgate.log.1` 重新开始。
+/// 日志文件轮转阈值：超过后 `proxyone.log` 改名为 `proxyone.log.1` 重新开始。
 const LOG_ROTATE_BYTES: u64 = 5 * 1024 * 1024;
 
 /// 引擎日志落盘：追加写 + 简单大小轮转。打开失败后静默停写，
@@ -27,7 +27,7 @@ struct FileLogger {
 impl FileLogger {
     /// 打开日志文件；`dir` 为 `None`（目录不可用）或打开失败时静默停写。
     fn open(dir: Option<PathBuf>) -> Self {
-        let path = dir.map(|d| d.join("failgate.log"));
+        let path = dir.map(|d| d.join("proxyone.log"));
         let file = path.as_ref().and_then(|p| {
             std::fs::create_dir_all(p.parent()?).ok();
             OpenOptions::new().create(true).append(true).open(p).ok()

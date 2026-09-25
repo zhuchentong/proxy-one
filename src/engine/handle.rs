@@ -84,7 +84,7 @@ impl EngineHandle {
         let (done_tx, done_rx) = std::sync::mpsc::channel();
         let (test_tx, test_rx) = mpsc::unbounded_channel();
         let spawn_result = std::thread::Builder::new()
-            .name("failgate-engine".into())
+            .name("proxyone-engine".into())
             .spawn(move || {
                 let rt = match tokio::runtime::Builder::new_multi_thread()
                     .enable_all()

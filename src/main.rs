@@ -13,6 +13,7 @@ mod update;
 use config::LoadedConfig;
 
 fn main() -> eframe::Result<()> {
+    config::migrate_legacy_data_dir();
     let headless = std::env::args().any(|a| a == "--headless");
     let minimized = std::env::args().any(|a| a == "--minimized");
     let updated = std::env::args().any(|a| a == "--updated");
@@ -55,7 +56,7 @@ fn run_gui(loaded: LoadedConfig, dark: bool, minimized: bool) -> eframe::Result<
         ..Default::default()
     };
     eframe::run_native(
-        "failgate · 代理故障切换网关",
+        "proxyone · 代理故障切换网关",
         options,
         Box::new(move |cc| {
             ui::install_fonts(&cc.egui_ctx);

@@ -146,7 +146,7 @@ impl TrayHandle {
 
         let menu = Menu::new();
         let title_item = MenuItem::new(
-            concat!("failgate v", env!("CARGO_PKG_VERSION")),
+            concat!("proxyone v", env!("CARGO_PKG_VERSION")),
             false,
             None,
         );
@@ -174,7 +174,7 @@ impl TrayHandle {
         menu.append(&quit_item)?;
 
         let tray = TrayIconBuilder::new()
-            .with_tooltip("failgate 代理故障切换网关")
+            .with_tooltip("proxyone 代理故障切换网关")
             .with_icon(icon_stopped.clone())
             .with_menu(Box::new(menu))
             .with_menu_on_left_click(false)

@@ -144,7 +144,7 @@ async fn check_one(ctx: Arc<EngineCtx>, idx: usize, manual: bool) {
             .await
             .map_err(|e| e.to_string())?;
         let req = format!(
-            "GET {path} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: failgate-health\r\nConnection: close\r\n\r\n"
+            "GET {path} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: proxyone-health\r\nConnection: close\r\n\r\n"
         );
         s.write_all(req.as_bytes())
             .await

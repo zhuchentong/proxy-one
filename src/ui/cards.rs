@@ -17,7 +17,7 @@ use crate::engine::{HealthStatus, Phase, Snapshot};
 impl App {
     pub(crate) fn header(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("failgate").strong().size(SZ_TITLE));
+            ui.label(egui::RichText::new("proxyone").strong().size(SZ_TITLE));
             ui.label(
                 egui::RichText::new("代理故障切换网关")
                     .weak()

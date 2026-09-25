@@ -187,9 +187,18 @@ fn exe_dir() -> Option<PathBuf> {
         .and_then(|p| p.parent().map(Path::to_path_buf))
 }
 
-/// 用户级数据目录 `%LOCALAPPDATA%\failgate`（exe 位于 Program Files 等只读
+/// 用户级数据目录 `%LOCALAPPDATA%\proxyone`（exe 位于 Program Files 等只读
 /// 目录时，配置与日志的唯一可写落点）。
 pub(crate) fn data_dir() -> Option<PathBuf> {
+    std::env::var("LOCALAPPDATA")
+        .ok()
+        .filter(|d| !d.is_empty())
+        .map(PathBuf::from)
+        .map(|d| d.join("proxyone"))
+}
+
+/// 曾用名数据目录 `%LOCALAPPDATA%\failgate`（仅迁移用）。
+fn legacy_data_dir() -> Option<PathBuf> {
     std::env::var("LOCALAPPDATA")
         .ok()
         .filter(|d| !d.is_empty())
@@ -197,12 +206,43 @@ pub(crate) fn data_dir() -> Option<PathBuf> {
         .map(|d| d.join("failgate"))
 }
 
-/// 日志目录：`%LOCALAPPDATA%\failgate\logs`。
+/// 品牌更名的一次性迁移：目标目录不存在且旧目录存在时，把旧目录
+/// （config.toml、状态文件、日志）整体复制过来。复制而非移动——
+/// 旧日志文件可能被上一版本进程占用，移动会失败而复制总能成功。
+pub(crate) fn migrate_legacy_data_dir() {
+    let (Some(new_dir), Some(old_dir)) = (data_dir(), legacy_data_dir()) else {
+        return;
+    };
+    if new_dir.exists() || !old_dir.exists() {
+        return;
+    }
+    copy_tree(&old_dir, &new_dir);
+}
+
+fn copy_tree(src: &Path, dst: &Path) {
+    if !src.is_dir() {
+        return;
+    }
+    let _ = std::fs::create_dir_all(dst);
+    let Ok(entries) = std::fs::read_dir(src) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let to = dst.join(entry.file_name());
+        if entry.path().is_dir() {
+            copy_tree(&entry.path(), &to);
+        } else {
+            let _ = std::fs::copy(entry.path(), to);
+        }
+    }
+}
+
+/// 日志目录：`%LOCALAPPDATA%\proxyone\logs`。
 pub(crate) fn logs_dir() -> Option<PathBuf> {
     data_dir().map(|d| d.join("logs"))
 }
 
-/// 配置查找顺序：exe 同目录（便携模式）→ `%LOCALAPPDATA%\failgate` → 工作目录。
+/// 配置查找顺序：exe 同目录（便携模式）→ `%LOCALAPPDATA%\proxyone` → 工作目录。
 /// 都不存在时新配置写入 `%LOCALAPPDATA%`（exe 目录可能不可写）。
 fn candidate_paths() -> Vec<PathBuf> {
     let mut v = Vec::new();

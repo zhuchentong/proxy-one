@@ -385,7 +385,7 @@ impl App {
         let tx = self.update_tx.clone();
         let gateway = self.update_gateway();
         let spawned = std::thread::Builder::new()
-            .name("failgate-update".into())
+            .name("proxyone-update".into())
             .spawn(move || {
                 let res = crate::update::latest_release(gateway.as_deref())
                     .map(|opt| opt.filter(|r| crate::update::is_newer(&r.tag)));
@@ -410,7 +410,7 @@ impl App {
         let progress = self.update_progress.clone();
         let gateway = self.update_gateway();
         let spawned = std::thread::Builder::new()
-            .name("failgate-update".into())
+            .name("proxyone-update".into())
             .spawn(move || {
                 let result = if let Some(g) = &gateway {
                     crate::update::download(Some(g), &rel, &progress).or_else(|e| {

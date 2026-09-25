@@ -1,4 +1,4 @@
-﻿# failgate — 代理故障切换网关（Rust + GUI）
+﻿# proxyone — 代理故障切换网关（Rust + GUI）
 
 本机统一代理入口 **127.0.0.1:8888**，背后按优先级聚合多个上游代理。高优先级上游失效时自动切换、恢复后自动切回，应用只需指向 8888，永远不用手动改。
 
@@ -9,8 +9,8 @@
 ## 快速开始
 
 ```text
-failgate.exe            # 打开 GUI（启动即自动开始代理）
-failgate.exe --headless # 无界面常驻（日志打印到控制台，Ctrl+C 优雅退出）
+proxyone.exe            # 打开 GUI（启动即自动开始代理）
+proxyone.exe --headless # 无界面常驻（日志打印到控制台，Ctrl+C 优雅退出）
 ```
 
 GUI 操作：紧凑卡片式布局（默认窗口 440×700），顶栏「☀/🌙」一键切换**深色/浅色主题**（立即持久化到 config.toml 的 `general.theme`，重启保持）；状态卡展示运行状态、监听地址、当前上游与累计转发流量（上行/下行/连接数）；上游以卡片呈现（含各自累计流量统计；优先级徽章、内联编辑名称/地址、类型下拉、健康状态与延迟着色、使用中卡片高亮，支持上移/下移/删除）；上游区右上角**「测试全部」并发测试所有上游**（每个上游各自显示旋转等待动画与「测试中」，完成后写结果日志并刷新延迟）；「＋ 添加」展开添加卡片；「⚙」打开**独立设置页**（返回按钮 / Esc 退回主界面；「通用」：监听地址、深色主题、转发日志、系统代理、开机启动、自动检查更新、打开日志目录/配置所在目录；「健康检查」：检查间隔、超时、连续失败/成功阈值、测试 URL；「关于与更新」：当前版本、检查更新、下载进度与重启应用）；底部日志卡片保留最近 200 条彩色日志，支持展开/折叠、行内选中复制、一键「复制全部」与「清空」。所有修改点「保存并应用」即写入 config.toml，若引擎在运行会自动以新配置重启。
@@ -36,7 +36,7 @@ GUI 操作：紧凑卡片式布局（默认窗口 440×700），顶栏「☀/�
 
 ## 开机启动
 
-设置页（⚙）中有「开机启动」拨动开关：开启后写入当前用户注册表 Run 键（`HKCU\Software\Microsoft\Windows\CurrentVersion\Run\failgate`，无需管理员权限），登录 Windows 时自动启动并**最小化到托盘**（`--minimized` 参数，不弹窗口，代理直接可用）；关闭开关即移除该注册表项。exe 移动位置后重新启动程序会自动修正注册表中的路径。开关状态以注册表为准，GUI 每次启动时读取真实状态。
+设置页（⚙）中有「开机启动」拨动开关：开启后写入当前用户注册表 Run 键（`HKCU\Software\Microsoft\Windows\CurrentVersion\Run\proxyone`，无需管理员权限），登录 Windows 时自动启动并**最小化到托盘**（`--minimized` 参数，不弹窗口，代理直接可用）；关闭开关即移除该注册表项。exe 移动位置或应用改名后重新启动程序会自动修正注册表中的路径（曾用名残留的旧值会被清理，开机启动意图自动迁移）。开关状态以注册表为准，GUI 每次启动时读取真实状态。
 
 ## 自动更新
 
@@ -80,9 +80,9 @@ type = "auto"
 priority = 2
 ```
 
-配置查找顺序：**exe 同目录（便携模式）→ `%LOCALAPPDATA%\failgate` → 工作目录**；都不存在时自动写入 `%LOCALAPPDATA%\failgate\config.toml`（exe 位于 Program Files 等只读目录时依然可用；exe 同目录存在 config.toml 则始终优先使用，便携携带无忧）。
+配置查找顺序：**exe 同目录（便携模式）→ `%LOCALAPPDATA%\proxyone` → 工作目录**；都不存在时自动写入 `%LOCALAPPDATA%\proxyone\config.toml`（exe 位于 Program Files 等只读目录时依然可用；exe 同目录存在 config.toml 则始终优先使用，便携携带无忧）。曾用名数据目录（`%LOCALAPPDATA%\failgate`）存在时会整体自动迁移。
 
-引擎日志同时落盘到 `%LOCALAPPDATA%\failgate\logs\failgate.log`（超过 5MB 自动轮转为 `failgate.log.1`）；设置页提供「打开日志目录」「打开配置所在目录」快捷入口。
+引擎日志同时落盘到 `%LOCALAPPDATA%\proxyone\logs\proxyone.log`（超过 5MB 自动轮转为 `proxyone.log.1`）；设置页提供「打开日志目录」「打开配置所在目录」快捷入口。
 
 上游认证（`username`/`password` 可选字段，留空即无认证）：
 
@@ -154,7 +154,7 @@ curl -x socks5h://127.0.0.1:8888 https://www.google.com
 cargo build --release
 ```
 
-产物：`target\release\failgate.exe`（自包含单文件）。
+产物：`target\release\proxyone.exe`（自包含单文件）。
 
 > 渲染后端说明：GUI 使用 **wgpu**（DX12/Vulkan，兼容远程桌面），之前使用的 glow（OpenGL）在部分远程会话/驱动状态下会出现窗口白屏，故已切换。
 > 本项目使用 GNU 工具链构建（见 `.rustup override` 与 `.cargo/config.toml`）。本机 MSVC 链接器缺失（VS 2026 未装 C++ 工作负载），如需切回 MSVC：在 VS Installer 中为 VS 2026 勾选「使用 C++ 的桌面开发」，然后 `rustup override unset`。

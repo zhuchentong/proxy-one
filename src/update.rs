@@ -1,7 +1,7 @@
 //! 自动更新：GitHub Releases 版本检查、经网关优先的下载与原子替换。
 //!
 //! - 更新源 = `CARGO_PKG_REPOSITORY` 指向仓库的 latest release（不含预发布），
-//!   资产为裸 `failgate.exe` + `failgate.exe.sha256`（见 .github/workflows/ci.yml）。
+//!   资产为裸 `proxyone.exe` + `proxyone.exe.sha256`（见 .github/workflows/ci.yml）。
 //! - HTTPS 走 native-tls（Windows 落到 schannel，证书校验用系统信任库），
 //!   请求为手写 HTTP/1.1，与 engine 的风格一致，无 C 构建依赖。
 //! - 下载通道优先经本网关自身（享受上游故障切换），失败回退直连。
@@ -21,8 +21,8 @@ use std::time::Duration;
 /// 自动检查节流：GitHub 未认证限额 60 次/时/IP，24h 一次绰绰有余
 pub(crate) const CHECK_INTERVAL_SECS: u64 = 24 * 3600;
 pub(crate) const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
-const EXE_ASSET: &str = "failgate.exe";
-const SHA_ASSET: &str = "failgate.exe.sha256";
+const EXE_ASSET: &str = "proxyone.exe";
+const SHA_ASSET: &str = "proxyone.exe.sha256";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const RW_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_BODY: usize = 64 * 1024 * 1024;
@@ -387,7 +387,7 @@ fn get_follow(
             .connect(&host, tcp)
             .with_context(|| format!("TLS 握手失败：{host}"))?;
         let req = format!(
-            "GET {path} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: failgate/{CURRENT_VERSION}\r\n{extra_headers}Connection: close\r\n\r\n"
+            "GET {path} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: proxyone/{CURRENT_VERSION}\r\n{extra_headers}Connection: close\r\n\r\n"
         );
         tls.write_all(req.as_bytes())?;
         if let Some(p) = progress {
@@ -473,7 +473,7 @@ mod tests {
     #[test]
     fn sha256_line_takes_first_hex_token() {
         let line =
-            b"ABCdef0123456789ABCdef0123456789ABCdef0123456789ABCdef0123456789  failgate.exe\n";
+            b"ABCdef0123456789ABCdef0123456789ABCdef0123456789ABCdef0123456789  proxyone.exe\n";
         assert_eq!(
             parse_sha256(line).unwrap(),
             "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
