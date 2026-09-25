@@ -6,8 +6,18 @@
 
 > Lightweight proxy failover gateway: a mixed HTTP/SOCKS5 entry that aggregates prioritized upstream proxies with health-checked automatic failover.
 
+## 截图
+
+<p align="center">
+  <img src="images/main-dark.png" width="320" alt="主界面（深色主题）">
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="images/settings.png" width="320" alt="独立设置页">
+</p>
+<p align="center"><sub>左：主界面（深色主题，运行中）；右：独立设置页</sub></p>
+
 ## 目录
 
+- [截图](#截图)
 - [功能特性](#功能特性)
 - [快速开始](#快速开始)
 - [图形界面](#图形界面)
