@@ -333,13 +333,21 @@ mod tests {
 
     #[test]
     fn newer_only_for_strictly_greater_versions() {
-        assert_eq!(CURRENT_VERSION, "0.1.0");
-        assert!(is_newer("v0.1.1"));
-        assert!(is_newer("v0.2"));
-        assert!(is_newer("v1.0.0"));
-        assert!(!is_newer("v0.1.0"));
-        assert!(!is_newer("v0.0.9"));
-        assert!(!is_newer("v0.1.0-beta")); // 预发布跳过
+        // 与 Cargo 版本解耦：相对编译期注入的 CURRENT_VERSION 做断言，
+        // 升版本号不再需要回来改测试
+        let (maj, min, pat) = parse_tag(CURRENT_VERSION).expect("Cargo 版本必须可解析");
+        let v = |a: u64, b: u64, c: u64| format!("v{a}.{b}.{c}");
+
+        // 任一位严格更大才提示
+        assert!(is_newer(&v(maj + 1, min, pat)));
+        assert!(is_newer(&v(maj, min + 1, pat)));
+        assert!(is_newer(&v(maj, min, pat + 1)));
+
+        // 相同版本不提示；更小的已发布版本不提示（0.0.2 早于任何后续发布）
+        assert!(!is_newer(&v(maj, min, pat)));
+        assert!(!is_newer("v0.0.2"));
+        // 预发布跳过，即便版本号本身更大
+        assert!(!is_newer(&format!("v{}.{}.{}-beta", maj + 1, min, pat)));
     }
 
     #[test]
