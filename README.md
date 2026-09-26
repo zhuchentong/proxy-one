@@ -4,7 +4,9 @@
 
 简体中文 | [English](README.en.md)
 
-**proxyone** 是一个轻量级代理故障切换网关：本机统一代理入口 `127.0.0.1:8888`，背后按优先级聚合多个上游代理。高优先级上游失效时自动切换、恢复后自动切回，应用程序只需指向 8888，无需手动调整。
+**proxyone** 是一个轻量级代理故障切换网关：本机统一代理入口 `127.0.0.1:8888`，背后按优先级聚合多个上游代理。高优先级上游失效时自动切换、恢复后自动切回——应用程序只需指向 8888，无需手动调整。
+
+> 典型用法：本机已有多个代理客户端（如 `127.0.0.1:8890`、`127.0.0.1:7890`），proxyone 把它们聚合成一个稳定入口，谁可用用谁，应用侧只配置一次。
 
 > Lightweight proxy failover gateway: a mixed HTTP/SOCKS5 entry that aggregates prioritized upstream proxies with health-checked automatic failover.
 
@@ -36,14 +38,25 @@
 
 ## 功能特性
 
-- **混合入口端口**：同一端口同时支持 HTTP 代理（CONNECT / 绝对 URI）与 SOCKS5（首字节协议嗅探，与 Clash mixed-port 同机制）。
-- **透明故障切换**：上游拨号失败时，在向客户端转发任何字节之前沿优先级就地切换，对客户端透明；上游恢复后新连接自动切回。
-- **健康检查**：周期主动探测，配合连续失败/成功滞后阈值，防止状态抖动。
-- **上游认证**：SOCKS5 RFC 1929 用户名/密码与 HTTP Basic，按配置按需透传。
-- **系统代理接管**：一键将 Windows 系统代理指向网关，具备快照恢复、崩溃自愈与冲突保护。
-- **开机启动**：用户级注册表实现，无需管理员权限，路径变更后自动修正。
-- **自动更新**：基于 GitHub Releases，下载优先经自身网关转发（享受上游故障切换），三重完整性校验与原子替换。
-- **单文件便携**：Rust 单二进制，egui/eframe 原生 GUI；数据面为纯 TCP 隧道盲转发。
+**核心代理**
+
+- **混合入口**：同一端口同时支持 HTTP（CONNECT / 绝对 URI）与 SOCKS5；首字节协议嗅探，与 Clash mixed-port 同机制。
+- **透明故障切换**：上游失效时，在向客户端转发任何字节之前就地切换；恢复后新连接自动切回。
+- **健康检查**：周期主动探测 + 连续失败/成功滞后阈值，防止状态抖动。
+- **上游认证**：SOCKS5 RFC 1929 与 HTTP Basic，按配置按需透传。
+
+**系统集成**
+
+- **系统代理接管**：一键将系统代理指向网关；快照恢复、崩溃自愈、冲突保护。
+- **开机启动**：用户级配置，无需管理员权限；exe 移动或改名后路径自动修正。
+- **自动更新**：基于 GitHub Releases；下载优先经自身网关转发（享受上游故障切换），三重完整性校验 + 原子替换。
+
+**可观测与体验**
+
+- **日志页**：整页日志浏览，关键字过滤 + 级别筛选（INFO / OK / WARN / ERR）。
+- **统计页**：按上游汇总健康状态、累计流量、实时速率与峰值（每秒采样）。
+- **单文件便携**：Rust 单二进制，egui 原生 GUI；数据面为纯 TCP 隧道盲转发。
+- **深浅主题**与 `--headless` 无界面常驻模式。
 
 ## 平台支持
 
@@ -57,25 +70,21 @@
 | 自动更新 | ✅ | ✅（Linux 侧为 rename 原子替换） |
 | 无界面模式 | ✅ | ✅（推荐 systemd user 服务常驻） |
 
-### Linux 构建依赖（Manjaro / Arch）
-
-```bash
-sudo pacman -S --needed rust gtk3 openssl pkgconf
-cargo build --release
-```
-
-GUI 依赖 Wayland 或 X11 会话；中文字体建议安装 `noto-fonts-cjk`。Debian/Ubuntu 系对应包为 `libgtk-3-dev pkg-config libssl-dev`。
-
 ## 快速开始
 
 ### 获取与运行
 
-- **下载预编译版本**：从 [Releases](https://github.com/zhuchentong/proxy-one/releases) 页面下载 `proxyone.exe`，双击运行即打开 GUI 并自动开始代理。
-- **从源码构建**：
+**方式一：下载预编译版本（推荐）**
 
-  ```bat
-  cargo build --release
-  ```
+1. 从 [Releases](https://github.com/zhuchentong/proxy-one/releases) 下载 `proxyone.exe`（Linux 下载 `proxyone-linux-x64`）；
+2. 双击运行——GUI 打开，代理自动开始；首次运行会在用户配置目录生成默认配置（含两个示例上游，可按需修改）；
+3. 把应用的代理设置指向 `127.0.0.1:8888`（HTTP 或 SOCKS5 均可）。
+
+**方式二：从源码构建**
+
+```bat
+cargo build --release
+```
 
 ### 命令行参数
 
@@ -102,15 +111,18 @@ curl -x socks5h://127.0.0.1:8888 https://www.google.com
 
 紧凑卡片式布局，默认窗口 440×700：
 
-- **状态卡**：运行状态、监听地址、当前上游、累计转发流量（上行/下行/连接数）。
+- **状态卡**：运行状态、监听地址、当前上游、累计转发流量与实时速率。
 - **上游卡片**：优先级徽章、名称/地址内联编辑、类型下拉（auto/http/socks5）、健康状态与延迟着色、使用中高亮；每张卡片独立统计流量与当前速率，支持上移/下移/删除。
 - **测试全部**：并发测试所有上游，测试中显示旋转等待动画，完成后写结果日志并刷新延迟。
 - **添加上游**：「＋ 添加」展开表单，可选择置顶优先级。
-- **日志面板**：保留最近 200 条彩色日志，支持展开/折叠、行内选中复制、一键复制全部与清空；「↗」进入独立日志页。
-- **日志页**：整页浏览引擎日志，支持关键字过滤与级别筛选（INFO/OK/WARN/ERR 独立开关），显示命中计数，复制跟随筛选结果；「← 返回」或 `Esc` 回主界面。
-- **统计页**：按上游汇总健康状态（状态/延迟/检查次数与失败数）、累计流量与连接数、当前速率与峰值（每秒采样，峰值记录出现时刻）；页内可一键「清零统计」；主界面状态卡与上游卡也会实时显示当前速率。
 - **主题**：顶栏「☀/🌙」切换深色/浅色，立即持久化到配置。
 - 所有修改点「保存并应用」后写入 `config.toml`；引擎运行中会自动以新配置重启。
+
+### 日志与统计
+
+- **日志面板**（主界面底部）：保留最近 200 条彩色日志，支持展开/折叠、行内选中复制、一键复制全部与清空。
+- **日志页**：日志卡「↗」进入整页浏览；关键字过滤 + 级别筛选（INFO / OK / WARN / ERR 独立开关），显示命中计数，复制跟随筛选结果；「← 返回」或 `Esc` 回主界面。
+- **统计页**：主界面「统计」按钮进入；按上游汇总健康状态（状态 / 延迟 / 检查次数与失败数）、累计流量与连接数、当前速率与峰值（每秒采样，峰值记录出现时刻），可一键「清零统计」。
 
 ### 托盘图标
 
@@ -133,9 +145,9 @@ curl -x socks5h://127.0.0.1:8888 https://www.google.com
 
 ## 系统代理
 
-设置页「通用」卡与托盘菜单均提供开关，状态跨重启保持。Windows 与 Linux 的机制不同（见「平台支持」），Linux 侧写入的 environment.d 片段在下次登录时对 systemd 用户会话生效，已运行程序不受影响：
+设置页「通用」卡与托盘菜单均提供开关，状态跨重启保持。机制按平台不同（见「平台支持」）：Windows 即时生效；Linux 写入的 environment.d 片段在下次登录时对 systemd 用户会话生效，已运行程序不受影响。
 
-- **开启**：将 WinINet 系统代理（`Internet Settings` 注册表键）指向监听地址并广播刷新，已运行程序立即生效；开启前的原值（ProxyEnable / ProxyServer / ProxyOverride / AutoConfigURL）快照至数据目录。
+- **开启**：WinINet 系统代理指向监听地址并广播刷新，已运行程序立即生效；开启前的原值（ProxyEnable / ProxyServer / ProxyOverride / AutoConfigURL）快照至数据目录。
 - **绕过列表追加而非覆盖**：自动补充 `localhost;127.*;<local>`，用户自加条目原样保留。
 - **关闭 / 退出**：恢复快照原值，而非简单置空；此前使用的其他代理（如 8890）照常还原。
 - **崩溃自愈**：异常退出残留的指向本网关的系统代理，下次启动自动恢复原值；若开关原本开启，引擎启动后自动重新接管。
@@ -144,7 +156,13 @@ curl -x socks5h://127.0.0.1:8888 https://www.google.com
 
 ## 开机启动
 
-设置页「开机启动」开关：Windows 写入当前用户注册表 Run 键（`HKCU\...\Run\proxyone`），Linux 写入 XDG autostart 桌面项（`~/.config/autostart/proxyone.desktop`），均无需管理员权限；登录时自动以 `--minimized` 启动并隐藏，代理直接可用。exe 移动位置、应用改名后，下次启动自动修正已保存的路径（曾用名残留会被清理，开机启动意图自动迁移）。开关状态以系统为准，GUI 每次启动时读取真实状态。
+设置页「开机启动」开关，均无需管理员权限：
+
+- **Windows**：写入当前用户注册表 Run 键（`HKCU\...\Run\proxyone`）。
+- **Linux**：写入 XDG autostart 桌面项（`~/.config/autostart/proxyone.desktop`）。
+- **登录行为**：自动以 `--minimized` 启动并隐藏，代理登录后直接可用。
+- **路径自愈**：exe 移动位置、应用改名后，下次启动自动修正已保存路径（曾用名残留会被清理，开机启动意图自动迁移）。
+- **状态以系统为准**：GUI 每次启动读取真实状态，不凭记忆显示。
 
 > sway 注意：sway 本体不解析 XDG autostart 目录，需在 sway config 中加入 `exec dex -a`（或使用 systemd user 服务运行 `proxyone --headless`）。
 
@@ -155,7 +173,7 @@ curl -x socks5h://127.0.0.1:8888 https://www.google.com
 - **更新源**：GitHub Releases（仓库取自 `Cargo.toml` 的 `repository` 字段），仅使用 latest release，预发布版本不会推送给用户。
 - **下载通道**：引擎运行时优先经本网关自身转发下载，享受上游故障切换保护；失败自动回退直连。
 - **完整性校验**：Content-Length 长度、`sha256` 校验和、PE 文件头三重校验全部通过后才落盘。
-- **原子替换**：利用「Windows 允许改名运行中的 exe」完成 `当前 exe → .old`、`.new → 当前名` 的原子交换，随即分离启动新版本并退出；系统代理先恢复原值，新实例启动后按持久化意图自动重新接管。
+- **原子替换**：Windows 利用「允许改名运行中的 exe」完成 `当前 exe → .old`、`.new → 当前名` 的原子交换，Linux 为 rename 覆盖；随即分离启动新版本并退出，系统代理先恢复原值，新实例按持久化意图自动重新接管。
 - **回滚**：`.old` 保留上一版本；exe 目录只读等异常时更新中止并给出提示，也可手动将 `.old` 改回。
 - 检查 / 下载失败仅轻提示或静默处理，不影响代理主功能。
 
@@ -194,11 +212,12 @@ priority = 2
 
 ### 加载规则
 
-- **加载顺序**：查找 exe 同目录（便携模式）→ 用户配置目录 → 工作目录；均不存在时自动生成于用户配置目录。
+- **查找顺序**：exe 同目录（便携模式）→ 用户配置目录 → 工作目录；均不存在时自动生成于用户配置目录。
 - exe 同目录存在 `config.toml` 时始终优先使用，便于便携携带；exe 位于只读目录时依然可用。
-- 用户配置目录：Windows 为 `%LOCALAPPDATA%\proxyone`，Linux 为 `$XDG_CONFIG_HOME/proxyone`（默认 `~/.config/proxyone`）；数据（状态文件、日志）目录：Windows 同上，Linux 为 `$XDG_DATA_HOME/proxyone`（默认 `~/.local/share/proxyone`）。
+- **用户配置目录**：Windows 为 `%LOCALAPPDATA%\proxyone`，Linux 为 `$XDG_CONFIG_HOME/proxyone`（默认 `~/.config/proxyone`）。
+- **数据目录**（状态文件、日志）：Windows 同配置目录，Linux 为 `$XDG_DATA_HOME/proxyone`（默认 `~/.local/share/proxyone`）。
 - Windows 曾用名数据目录（`%LOCALAPPDATA%\failgate`）存在时会整体自动迁移。
-- 引擎日志落盘至 `<数据目录>/logs/proxyone.log`，超过 5MB 自动轮转为 `proxyone.log.1`；设置页提供「打开日志目录」「打开配置所在目录」快捷入口。
+- **引擎日志**落盘至 `<数据目录>/logs/proxyone.log`，超过 5MB 自动轮转为 `proxyone.log.1`；设置页提供「打开日志目录」「打开配置所在目录」快捷入口。
 
 ### 上游认证
 
@@ -210,11 +229,11 @@ priority = 2
 
 ## 工作原理
 
-- **协议探测**：`type = "auto"` 时向上游发送 SOCKS5 握手包，响应 `0x05` 判为 SOCKS5，否则判为 HTTP；探测结果缓存，也可手动指定类型。
-- **主动健康检查**：每 `interval_secs` 经各上游对 `test_url` 发起 GET（期望 2xx）并记录延迟；连续失败 `fail_threshold` 次标记 DOWN，连续成功 `success_threshold` 次恢复 UP；启动时立即执行一轮。
-- **被动快速切换**：新连接拨号失败（拒连 / 握手失败）立即标记 DOWN，并在向客户端转发任何字节之前就地切换重试，同时触发一轮全量检查；经代理转发后才发现目标不可达（CONNECT 非 2xx、SOCKS5 错误码）不标记 DOWN，但同样切换。
-- **路由与切回**：每次新连接选择状态为 UP 的最高优先级上游；高优先级恢复后新连接自动切回。全部 DOWN 时仍按优先级尽力拨号。
-- **连接不迁移**：切换只影响新连接，已建立连接继续使用原上游直至结束。
+1. **协议探测**：`type = "auto"` 时向上游发送 SOCKS5 握手包，响应 `0x05` 判为 SOCKS5，否则判为 HTTP；探测结果缓存，也可手动指定类型。
+2. **主动健康检查**：每 `interval_secs` 经各上游对 `test_url` 发起 GET（期望 2xx）并记录延迟；连续失败 `fail_threshold` 次标记 DOWN，连续成功 `success_threshold` 次恢复 UP；启动时立即执行一轮。
+3. **被动快速切换**：新连接拨号失败（拒连 / 握手失败）立即标记 DOWN，并在向客户端转发任何字节之前就地切换重试，同时触发一轮全量检查；经代理转发后才发现目标不可达（CONNECT 非 2xx、SOCKS5 错误码）不标记 DOWN，但同样切换。
+4. **路由与切回**：每次新连接选择状态为 UP 的最高优先级上游；高优先级恢复后新连接自动切回。全部 DOWN 时仍按优先级尽力拨号。
+5. **连接不迁移**：切换只影响新连接，已建立连接继续使用原上游直至结束。
 
 ## 项目结构
 
@@ -271,7 +290,16 @@ cargo build --release
 
 产物为自包含单文件 `target/release/proxyone`（Windows 为 `proxyone.exe`）。单元测试：`cargo test`（覆盖配置解析、版本号比较、GitHub 资产筛选、sha256 解析、URL/authority 解析、HTTP 改写语义、路由候选排序、健康检查滞后转移、头部读取器等，另含平台专属用例）。
 
-开发环境说明：
+### Linux 构建依赖（Manjaro / Arch）
+
+```bash
+sudo pacman -S --needed rust gtk3 openssl pkgconf
+cargo build --release
+```
+
+GUI 依赖 Wayland 或 X11 会话；中文字体建议安装 `noto-fonts-cjk`。Debian/Ubuntu 系对应包为 `libgtk-3-dev pkg-config libssl-dev`。
+
+### 开发环境说明
 
 - GUI 渲染使用 **wgpu**（DX12/Vulkan，兼容远程桌面）；glow（OpenGL）实测存在窗口白屏问题——不仅限远程会话，本地 NVIDIA 驱动同样复现（2026-09 二次验证后回退），勿再切回。
 - 本仓库使用 GNU 工具链构建（目录级 `rustup override`）；如需切回 MSVC，请在 VS Installer 中为 Visual Studio 安装「使用 C++ 的桌面开发」工作负载，然后执行 `rustup override unset`。
@@ -279,14 +307,18 @@ cargo build --release
 
 ## 已知限制
 
+**代理语义**
+
 - 不代理 UDP（SOCKS5 仅支持 CONNECT，BIND / UDP ASSOCIATE 明确拒绝）
+- 入站 SOCKS5 仅支持无认证（仅监听回环地址，本地使用无需认证）；SOCKS4 请求被拒绝
+- 纯 HTTP 转发强制 `Connection: close`（客户端每请求一条连接；浏览器与 WebSocket 不受影响，ws 走 CONNECT）
+- 健康检查 `test_url` 仅支持 `http://`（默认 generate_204 即为 http）
+
+**平台与部署**
+
 - Linux 托盘图标暂未支持（阶段 3 计划，倾向 KSNI 路线；当前 GUI 正常运行，仅无托盘）
 - Linux 系统代理为 environment.d 片段（下次登录生效），不支持已运行程序的即时接管
-- 入站侧 SOCKS5 仅支持无认证（仅监听回环地址，本地使用无需认证）
-- 健康检查 `test_url` 仅支持 `http://`（默认 generate_204 即为 http）
-- 纯 HTTP 转发强制 `Connection: close`（客户端每请求一条连接；浏览器与 WebSocket 不受影响，ws 走 CONNECT）
 - 默认 8s 间隔的健康检查对每个上游每天约 1 万次 204 探测，量级无害；如需调整可在 GUI 修改检查间隔
-- 切换只影响新连接；SOCKS4 入站请求被拒绝（仅支持 SOCKS5 / HTTP）
 
 ## 许可证
 
