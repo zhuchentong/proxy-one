@@ -12,6 +12,7 @@
 use std::sync::mpsc::Receiver;
 
 use anyhow::{Context as _, Result};
+use eframe::egui;
 use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu};
 use tray_icon::{Icon, MouseButton, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
@@ -341,6 +342,13 @@ mod tests {
             conns: 0,
             bytes_up: 0,
             bytes_down: 0,
+            rate_up: 0,
+            rate_down: 0,
+            peak_up: 0,
+            peak_down: 0,
+            peak_at: None,
+            checks_total: 0,
+            checks_failed: 0,
             testing: false,
         }
     }

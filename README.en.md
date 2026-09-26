@@ -103,10 +103,12 @@ All three commands should succeed (`test_curl.bat` in the repository is a batch 
 Compact card layout, default window 440×700:
 
 - **Status card**: running state, listen address, active upstream, cumulative forwarded traffic (up/down/connections).
-- **Upstream cards**: priority badge, inline name/address editing, type dropdown (auto/http/socks5), health state with latency coloring, highlight for the upstream in use; per-card traffic stats, reorder up/down, delete.
+- **Upstream cards**: priority badge, inline name/address editing, type dropdown (auto/http/socks5), health state with latency coloring, highlight for the upstream in use; per-card traffic stats with live rate, reorder up/down, delete.
 - **Test all**: probes every upstream concurrently with a spinner; results are written to the log and latencies refreshed.
 - **Add upstream**: the "＋ Add" button expands a form with an optional top-priority placement.
-- **Log panel**: the last 200 colored log entries with collapse/expand, per-line selection copy, copy-all, and clear.
+- **Log panel**: the last 200 colored log entries with collapse/expand, per-line selection copy, copy-all, and clear; "↗" opens the dedicated log page.
+- **Log page**: full-page log browsing with keyword search and per-level filters (INFO/OK/WARN/ERR toggles), a match counter, and copy that follows the active filter; "←" or `Esc` returns to the main view.
+- **Statistics page**: per-upstream summary of health state (status / latency / check counts), cumulative traffic and connections, and current rate & peak (sampled every second, peak keeps its timestamp); a one-click "Reset stats" clears the session numbers. The status card and upstream cards on the main view also show the live rate.
 - **Theme**: the "☀/🌙" button in the top bar toggles dark/light and persists immediately.
 - Every modification takes effect via "Save & apply", which writes `config.toml` and restarts a running engine with the new configuration.
 
@@ -236,12 +238,15 @@ src/
     ui.rs               App state & eframe orchestration (logic: tray/close interception + layout)
     update_flow.rs      Update UI orchestration: check/download threads & state machine
     cards.rs            Main view & cards: status / upstream / add / logs / footer
+    logs.rs             Dedicated log page: keyword & level filters, match count, filtered copy
+    stats.rs            Dedicated statistics page: per-upstream health, traffic, rate & peak
     settings.rs         Settings page: general / health check / about & updates
     theme.rs            Dark/light palettes, Visuals tuning, CJK font loading
     widgets.rs          Basic widgets: cards, pill badges, toggle switch, buttons, log coloring
   engine/
     handle.rs           Engine lifecycle (background thread + tokio runtime, start/stop)
     state.rs            Shared state: snapshot, 200-entry log ring, EngineCtx
+    rates.rs            Traffic rate sampling: 1 s deltas over cumulative bytes → current rate & peak
     filelog.rs          Log persistence: append + 5 MB rotation
     server.rs           Inbound listener + first-byte protocol sniffing (0x05 SOCKS5 / HTTP / 0x04 rejected)
     http.rs             Inbound HTTP: CONNECT tunnels, absolute-URI rewrite, hop-by-hop stripping
@@ -254,7 +259,7 @@ src/
       dial_socks5.rs    SOCKS5 upstream dialing (RFC 1929 username/password)
       mock.rs           Test-only mock upstream (compiled in test builds only)
     b64.rs              Standard padded Base64 (for auth headers)
-    stream.rs           Tunnel stream utilities: PrefixedStream (prefix replay), read_head
+    stream.rs           Tunnel stream utilities: PrefixedStream (prefix replay), read_head, CountingStream (live traffic accounting)
     url.rs              host:port / authority / probe-URL parsing
 ```
 
@@ -268,7 +273,7 @@ The artifact is a self-contained single file `target/release/proxyone` (`proxyon
 
 Development notes:
 
-- The GUI renders with **wgpu** (DX12/Vulkan, remote-desktop friendly); the earlier glow (OpenGL) backend had blank-window issues in some remote sessions/drivers, hence the switch.
+- The GUI renders with **wgpu** (DX12/Vulkan, remote-desktop friendly); the glow (OpenGL) backend was verified to produce blank windows — not only in remote sessions but also locally on NVIDIA drivers (re-confirmed and reverted in 2026-09); do not switch back.
 - crates mirror: under a TUN virtual adapter, TLS handshakes from cargo to some mirror hosts get intercepted; this repository pins the Aliyun mirror via a project-level `.cargo/config.toml` (affects this repo only).
 
 ## Known limitations

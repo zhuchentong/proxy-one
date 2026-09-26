@@ -4,14 +4,13 @@
 use eframe::egui;
 
 use super::App;
-use super::theme::{
-    GRAY, GREEN, ORANGE, RED, SZ_BODY, SZ_SECTION, SZ_SMALL, SZ_TINY, SZ_TITLE, YELLOW, palette,
-};
+use super::theme::{GREEN, ORANGE, RED, SZ_BODY, SZ_SECTION, SZ_SMALL, SZ_TINY, SZ_TITLE, palette};
 use super::widgets::{
-    ButtonVariant, card, chip, icon_button, level_color, styled_button, styled_button_ex,
+    ButtonVariant, card, chip, icon_button, latency_color, log_line, phase_indicator, status_glyph,
+    styled_button, styled_button_ex,
 };
 use crate::config::{self, UpstreamKind};
-use crate::engine::{HealthStatus, Phase, Snapshot};
+use crate::engine::{Phase, Snapshot};
 use crate::util::fmt_bytes;
 
 impl App {
@@ -39,13 +38,11 @@ impl App {
 
     pub(crate) fn status_card(&mut self, ui: &mut egui::Ui, snap: &Snapshot) {
         let p = palette(self.dark);
-        let (dot, label, running) = match snap.phase {
-            Phase::Running => (GREEN, "运行中", true),
-            Phase::Starting => (YELLOW, "启动中…", true),
-            Phase::Stopping => (YELLOW, "停止中…", true),
-            Phase::BindFailed => (RED, "端口绑定失败", false),
-            Phase::Stopped => (GRAY, "已停止", false),
-        };
+        let (dot, label) = phase_indicator(snap.phase);
+        let running = matches!(
+            snap.phase,
+            Phase::Running | Phase::Starting | Phase::Stopping
+        );
         card(ui, p.card, p.card_stroke, |ui| {
             ui.set_min_width(ui.available_width());
             ui.horizontal(|ui| {
@@ -85,25 +82,24 @@ impl App {
                     });
                 }
             });
-            // 累计转发流量（所有上游合计）
-            let (tot_up, tot_down, tot_conns) = snap
-                .upstreams
-                .iter()
-                .fold((0u64, 0u64, 0u64), |(a, b, c), u| {
-                    (a + u.bytes_up, b + u.bytes_down, c + u.conns)
-                });
-            if tot_conns > 0 {
+            // 累计转发流量（所有上游合计）；有活动连接时附带当前总速率
+            let (tot_up, tot_down, tot_conns, tot_rup, tot_rdown) = snap.traffic_totals();
+            if tot_conns > 0 || tot_rup > 0 || tot_rdown > 0 {
                 ui.add_space(2.0);
-                ui.label(
-                    egui::RichText::new(format!(
-                        "转发 ↑ {}  ↓ {}  ·  连接 {}",
-                        fmt_bytes(tot_up),
-                        fmt_bytes(tot_down),
-                        tot_conns
-                    ))
-                    .size(SZ_TINY)
-                    .color(p.weak),
+                let mut line = format!(
+                    "转发 ↑ {}  ↓ {}  ·  连接 {}",
+                    fmt_bytes(tot_up),
+                    fmt_bytes(tot_down),
+                    tot_conns
                 );
+                if tot_rup > 0 || tot_rdown > 0 {
+                    line.push_str(&format!(
+                        "  ·  当前 ↑ {}/s  ↓ {}/s",
+                        fmt_bytes(tot_rup),
+                        fmt_bytes(tot_rdown)
+                    ));
+                }
+                ui.label(egui::RichText::new(line).size(SZ_TINY).color(p.weak));
             }
         });
     }
@@ -145,6 +141,12 @@ impl App {
                     } else {
                         self.notify(("引擎未运行，无法测试上游".into(), ORANGE));
                     }
+                }
+                if styled_button_ex(ui, "统计", ButtonVariant::Ghost, self.dark, 24.0)
+                    .on_hover_text("按上游查看健康状态、流量与峰值")
+                    .clicked()
+                {
+                    self.show_stats = true;
                 }
             });
         });
@@ -189,13 +191,7 @@ impl App {
                     } else {
                         match st.and_then(|u| u.latency_ms) {
                             Some(ms) => {
-                                let c = if ms < 800 {
-                                    GREEN
-                                } else if ms < 3000 {
-                                    YELLOW
-                                } else {
-                                    RED
-                                };
+                                let c = latency_color(ms);
                                 ui.label(
                                     egui::RichText::new(format!("{ms} ms"))
                                         .size(SZ_SMALL)
@@ -209,11 +205,7 @@ impl App {
                     }
                     match st {
                         Some(u) => {
-                            let (d, c) = match u.status {
-                                HealthStatus::Up => ("●", GREEN),
-                                HealthStatus::Down => ("●", RED),
-                                HealthStatus::Unknown => ("○", GRAY),
-                            };
+                            let (d, c) = status_glyph(u.status);
                             ui.label(egui::RichText::new(d).color(c).size(SZ_SECTION));
                             ui.label(
                                 egui::RichText::new(u.status.label())
@@ -265,12 +257,21 @@ impl App {
                     }
                 });
             });
-            // 累计转发流量（连接数大于 0 时显示）
-            if let Some(u) = st.filter(|u| u.conns > 0) {
+            // 累计转发流量；有活动窗口时前缀当前速率（1s 采样）
+            if let Some(u) = st.filter(|u| u.conns > 0 || u.rate_up > 0 || u.rate_down > 0) {
                 ui.add_space(2.0);
+                let rate = if u.rate_up > 0 || u.rate_down > 0 {
+                    format!(
+                        "↑ {}/s  ↓ {}/s  ·  ",
+                        fmt_bytes(u.rate_up),
+                        fmt_bytes(u.rate_down)
+                    )
+                } else {
+                    String::new()
+                };
                 ui.label(
                     egui::RichText::new(format!(
-                        "↑ {}  ↓ {}  ·  {} 次连接",
+                        "{rate}↑ {}  ↓ {}  ·  {} 次连接",
                         fmt_bytes(u.bytes_up),
                         fmt_bytes(u.bytes_down),
                         u.conns
@@ -345,12 +346,17 @@ impl App {
                         .color(p.weak),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if icon_button(ui, "↗", "打开独立日志页（支持关键字与级别筛选）", self.dark)
+                        .clicked()
+                    {
+                        self.show_logs = true;
+                    }
                     if styled_button(ui, "复制全部", ButtonVariant::Ghost, self.dark).clicked()
                     {
                         let text = snap
                             .logs
                             .iter()
-                            .map(|e| format!("{} [{}] {}", e.time, e.level, e.msg))
+                            .map(|e| e.line())
                             .collect::<Vec<_>>()
                             .join("\n");
                         ui.ctx().copy_text(text);
@@ -372,15 +378,7 @@ impl App {
                 .max_height(body_h)
                 .show(ui, |ui| {
                     for e in &snap.logs {
-                        ui.add(
-                            egui::Label::new(
-                                egui::RichText::new(format!("{} [{}] {}", e.time, e.level, e.msg))
-                                    .monospace()
-                                    .size(SZ_TINY)
-                                    .color(level_color(e.level)),
-                            )
-                            .selectable(true),
-                        );
+                        log_line(ui, e);
                     }
                 });
         });

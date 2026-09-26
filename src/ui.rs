@@ -4,7 +4,9 @@
 //! 主题配色见 [`theme`]，基础控件见 [`widgets`]。
 
 mod cards;
+mod logs;
 mod settings;
+mod stats;
 mod theme;
 mod update_flow;
 pub(crate) mod widgets;
@@ -36,6 +38,12 @@ pub struct App {
     pub(crate) pending_action: Option<RowAction>,
     pub(crate) autostart: bool,
     pub(crate) log_expanded: bool,
+    /// 独立日志页：打开状态与筛选条件（关键字 + 级别点亮），跨开合保留
+    pub(crate) show_logs: bool,
+    pub(crate) log_search: String,
+    pub(crate) log_levels: logs::LevelFilter,
+    /// 独立统计页：健康状态、流量与峰值的按上游汇总
+    pub(crate) show_stats: bool,
     pub(crate) dirty: bool,
     pub(crate) msg: Option<(String, egui::Color32)>,
     /// 消息过期时刻：超过后自动从状态卡消失
@@ -77,6 +85,10 @@ impl App {
             pending_action: None,
             autostart: crate::platform::autostart::is_enabled(),
             log_expanded: false,
+            show_logs: false,
+            log_search: String::new(),
+            log_levels: logs::LevelFilter::default(),
+            show_stats: false,
             dirty: false,
             msg: None,
             msg_until: None,
@@ -302,6 +314,10 @@ impl eframe::App for App {
                 ui.set_min_width(ui.available_width());
                 if self.show_settings {
                     self.settings_view(ui);
+                } else if self.show_logs {
+                    self.logs_view(ui, &snap);
+                } else if self.show_stats {
+                    self.stats_view(ui, &snap);
                 } else {
                     self.main_view(ui, &snap);
                 }
@@ -317,6 +333,12 @@ impl App {
     /// 页脚预算高度：按钮 26 + footer 自带底部留白 8 + 富余 2。
     /// main_view 与 settings_view 共用，保证按钮与窗口下边缘保持呼吸空间。
     pub(crate) const FOOTER_H: f32 = 36.0;
+
+    /// 独立页内容区高度预算：扣除「与页脚之间 6px 间距 + 页脚预算」，
+    /// min 为保底值；settings/stats（120）与 logs（60）共用同一规则。
+    pub(crate) fn page_body_height(ui: &egui::Ui, min: f32) -> f32 {
+        (ui.available_height() - Self::FOOTER_H - 6.0).max(min)
+    }
 
     /// 系统代理开关：仅引擎运行时可开启；意图持久化到 config。
     fn set_sysproxy(&mut self, on: bool) {

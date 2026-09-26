@@ -38,7 +38,7 @@ impl App {
         self.error_banner(ui);
 
         // ScrollArea 不吃 footer 的空间：预留下方 6px 间距 + 页脚预算高度（App::FOOTER_H）
-        let scroll_h = (ui.available_height() - 6.0 - Self::FOOTER_H).max(120.0);
+        let scroll_h = Self::page_body_height(ui, 120.0);
         egui::ScrollArea::vertical()
             .id_salt("settings")
             .auto_shrink(false)

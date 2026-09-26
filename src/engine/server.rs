@@ -8,7 +8,7 @@ use tokio::sync::watch;
 
 use super::http;
 use super::socks5;
-use super::{EngineCtx, LogLevel};
+use super::state::{EngineCtx, LogLevel};
 
 pub async fn run(listener: TcpListener, ctx: Arc<EngineCtx>, mut stop: watch::Receiver<bool>) {
     loop {

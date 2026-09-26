@@ -2,8 +2,8 @@
 
 use eframe::egui;
 
-use super::theme::{GRAY, GREEN, RED, YELLOW, palette};
-use crate::engine::LogLevel;
+use super::theme::{GRAY, GREEN, RED, SZ_TINY, YELLOW, palette};
+use crate::engine::{HealthStatus, LogEntry, LogLevel, Phase};
 
 /// 圆角卡片容器，`stroke` 用于强调（如「使用中」的上游卡片为品牌绿）。
 pub(crate) fn card(
@@ -169,4 +169,48 @@ pub(crate) fn level_color(level: LogLevel) -> egui::Color32 {
         LogLevel::Warn => YELLOW,
         LogLevel::Error => RED,
     }
+}
+
+/// 阶段指示（状态点颜色 + 文案），状态卡与统计页汇总卡共用。
+pub(crate) fn phase_indicator(phase: Phase) -> (egui::Color32, &'static str) {
+    match phase {
+        Phase::Running => (GREEN, "运行中"),
+        Phase::Starting => (YELLOW, "启动中…"),
+        Phase::Stopping => (YELLOW, "停止中…"),
+        Phase::BindFailed => (RED, "端口绑定失败"),
+        Phase::Stopped => (GRAY, "已停止"),
+    }
+}
+
+/// 健康状态指示（圆点字形 + 颜色），上游卡与统计页共用。
+pub(crate) fn status_glyph(status: HealthStatus) -> (&'static str, egui::Color32) {
+    match status {
+        HealthStatus::Up => ("●", GREEN),
+        HealthStatus::Down => ("●", RED),
+        HealthStatus::Unknown => ("○", GRAY),
+    }
+}
+
+/// 延迟着色：<800ms 绿、<3000ms 黄、其余红。
+pub(crate) fn latency_color(ms: u64) -> egui::Color32 {
+    if ms < 800 {
+        GREEN
+    } else if ms < 3000 {
+        YELLOW
+    } else {
+        RED
+    }
+}
+
+/// 单条日志行（等宽、级别着色、可选中），日志卡与日志页共用。
+pub(crate) fn log_line(ui: &mut egui::Ui, e: &LogEntry) {
+    ui.add(
+        egui::Label::new(
+            egui::RichText::new(e.line())
+                .monospace()
+                .size(SZ_TINY)
+                .color(level_color(e.level)),
+        )
+        .selectable(true),
+    );
 }

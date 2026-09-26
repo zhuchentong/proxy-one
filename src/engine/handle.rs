@@ -49,6 +49,11 @@ impl EngineHandle {
         self.state.clear_logs();
     }
 
+    /// 清零本次会话的统计（累计流量/连接数、速率与峰值、检查计数）。
+    pub fn reset_stats(&self) {
+        self.state.reset_stats();
+    }
+
     pub fn is_running(&self) -> bool {
         matches!(self.state.phase(), Phase::Running | Phase::Starting)
     }
@@ -171,6 +176,7 @@ async fn engine_main(
         test_rx,
         stop_rx.clone(),
     ));
+    let rates = tokio::spawn(super::rates::run(ctx, stop_rx.clone()));
     let _ = health_tx.send(()); // 启动即做一轮健康检查
 
     let _ = stop_rx.changed().await;
@@ -178,6 +184,7 @@ async fn engine_main(
     state.set_phase(Phase::Stopping, &addr, None);
     srv.abort();
     hlth.abort();
+    rates.abort();
     tokio::time::sleep(Duration::from_millis(150)).await;
     state.log(LogLevel::Info, "引擎已停止");
     state.set_phase(Phase::Stopped, &addr, None);

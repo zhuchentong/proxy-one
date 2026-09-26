@@ -1,10 +1,12 @@
-﻿use std::sync::Arc;
+use std::sync::Arc;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
 use super::router;
-use super::{EngineCtx, LogLevel};
+use super::state::EngineCtx;
+use super::state::LogLevel;
+use super::stream::{CountingStream, traffic_callbacks};
 
 async fn socks_reply(stream: &mut TcpStream, code: u8) {
     let _ = stream
@@ -92,15 +94,13 @@ pub async fn handle(mut stream: TcpStream, ctx: Arc<EngineCtx>) {
     }
 
     match router::connect_target(&ctx, "SOCKS5", &host, port).await {
-        Ok((idx, mut up)) => {
+        Ok((idx, up)) => {
+            let (on_write, on_read) = traffic_callbacks(ctx.state.clone(), idx);
+            let mut up = CountingStream::new(up, on_write, on_read);
             let _ = stream
                 .write_all(&[0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
                 .await;
-            if let Ok((up_bytes, down_bytes)) =
-                tokio::io::copy_bidirectional(&mut stream, &mut up).await
-            {
-                ctx.state.record_traffic(idx, up_bytes, down_bytes);
-            }
+            let _ = tokio::io::copy_bidirectional(&mut stream, &mut up).await;
         }
         Err(e) => {
             ctx.log(LogLevel::Warn, format!("SOCKS5 {host}:{port} 失败: {e}"));

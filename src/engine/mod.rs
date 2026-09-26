@@ -8,18 +8,19 @@
 //! 与 GUI 的交互：[`state::StateStore`] 持有全部可观察状态（快照 + 日志），
 //! [`handle::EngineHandle`] 负责后台线程与 runtime 的启停控制。
 
-pub mod b64;
-pub mod filelog;
-pub mod handle;
-pub mod health;
-pub mod http;
-pub mod router;
-pub mod server;
-pub mod socks5;
-pub mod state;
-pub mod stream;
-pub mod upstream;
-pub mod url;
+mod b64;
+mod filelog;
+mod handle;
+mod health;
+mod http;
+mod rates;
+mod router;
+mod server;
+mod socks5;
+mod state;
+mod stream;
+mod upstream;
+mod url;
 
 pub use handle::EngineHandle;
-pub use state::{EngineCtx, HealthStatus, LogLevel, Phase, Snapshot, UpstreamState};
+pub use state::{HealthStatus, LogEntry, LogLevel, Phase, Snapshot, UpstreamState};

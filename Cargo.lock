@@ -2810,7 +2810,6 @@ dependencies = [
  "anyhow",
  "chrono",
  "eframe",
- "egui",
  "native-tls",
  "serde",
  "serde_json",

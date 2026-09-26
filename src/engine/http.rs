@@ -7,10 +7,11 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 
 use super::router;
-use super::stream::read_head;
+use super::state::EngineCtx;
+use super::state::LogLevel;
+use super::stream::{CountingStream, read_head, traffic_callbacks};
 use super::upstream;
 use super::url::{authority_path, split_host_port};
-use super::{EngineCtx, LogLevel};
 
 const BAD_REQUEST: &[u8] =
     b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
@@ -111,7 +112,10 @@ async fn handle_connect(
         return;
     };
     match router::connect_target(&ctx, "CONNECT", &host, port).await {
-        Ok((idx, mut up)) => {
+        Ok((idx, up)) => {
+            // 上游流包一层实时记账：转发字节随传输入账（含 CONNECT 首段的 leftover）
+            let (on_write, on_read) = traffic_callbacks(ctx.state.clone(), idx);
+            let mut up = CountingStream::new(up, on_write, on_read);
             if stream.write_all(CONNECTION_ESTABLISHED).await.is_err() {
                 return;
             }
@@ -119,11 +123,7 @@ async fn handle_connect(
             if !leftover.is_empty() && up.write_all(&leftover).await.is_err() {
                 return;
             }
-            if let Ok((up_bytes, down_bytes)) =
-                tokio::io::copy_bidirectional(&mut stream, &mut up).await
-            {
-                ctx.state.record_traffic(idx, up_bytes, down_bytes);
-            }
+            let _ = tokio::io::copy_bidirectional(&mut stream, &mut up).await;
         }
         Err(e) => {
             ctx.log(LogLevel::Warn, format!("CONNECT {host}:{port} 失败: {e}"));
@@ -141,7 +141,10 @@ async fn handle_plain(mut stream: TcpStream, ctx: Arc<EngineCtx>, req: Request, 
 
     let upgrade = req.header("upgrade").is_some();
     match router::connect_target(&ctx, &req.method, &host, port).await {
-        Ok((idx, mut up)) => {
+        Ok((idx, up)) => {
+            // 同 CONNECT：包装流实时记账，改写后的请求头也是上行流量
+            let (on_write, on_read) = traffic_callbacks(ctx.state.clone(), idx);
+            let mut up = CountingStream::new(up, on_write, on_read);
             // Proxy-Authorization 逐跳生效：拿到上游后才能按其类型补凭据
             let proxy_auth = upstream::proxy_auth_header(&ctx, idx).await;
             let new_head = build_origin_head(
@@ -156,11 +159,7 @@ async fn handle_plain(mut stream: TcpStream, ctx: Arc<EngineCtx>, req: Request, 
             if up.write_all(&payload).await.is_err() {
                 return;
             }
-            if let Ok((up_bytes, down_bytes)) =
-                tokio::io::copy_bidirectional(&mut stream, &mut up).await
-            {
-                ctx.state.record_traffic(idx, up_bytes, down_bytes);
-            }
+            let _ = tokio::io::copy_bidirectional(&mut stream, &mut up).await;
         }
         Err(e) => {
             ctx.log(

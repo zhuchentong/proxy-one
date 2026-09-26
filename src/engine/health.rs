@@ -169,6 +169,7 @@ async fn check_one(ctx: Arc<EngineCtx>, idx: usize, manual: bool) {
         Ok(Err(e)) => Err(e),
         Err(_) => Err("探测超时".to_string()),
     };
+    ctx.state.record_check(idx, outcome.is_ok());
     let ms = started.elapsed().as_millis() as u64;
     let now = super::state::now_string();
     let thr_ok = ctx.cfg.health.success_threshold.max(1);

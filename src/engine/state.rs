@@ -73,6 +73,16 @@ pub struct UpstreamState {
     pub conns: u64,
     pub bytes_up: u64,
     pub bytes_down: u64,
+    /// 速率与峰值（字节/秒，1s 采样窗口）：由引擎内的采样任务维护
+    pub rate_up: u64,
+    pub rate_down: u64,
+    pub peak_up: u64,
+    pub peak_down: u64,
+    /// 峰值最后一次刷新的时刻
+    pub peak_at: Option<String>,
+    /// 本次启动以来的健康检查次数与失败次数
+    pub checks_total: u64,
+    pub checks_failed: u64,
     /// 手动连通性测试进行中（GUI 据此显示等待动画）
     pub testing: bool,
 }
@@ -83,6 +93,8 @@ pub struct UpstreamStats {
     conns: AtomicU64,
     bytes_up: AtomicU64,
     bytes_down: AtomicU64,
+    checks_total: AtomicU64,
+    checks_failed: AtomicU64,
 }
 
 #[derive(Clone)]
@@ -90,6 +102,13 @@ pub struct LogEntry {
     pub time: String,
     pub level: LogLevel,
     pub msg: String,
+}
+
+impl LogEntry {
+    /// 统一的日志行格式：`时间 [级别] 消息`（渲染与复制共用）。
+    pub fn line(&self) -> String {
+        format!("{} [{}] {}", self.time, self.level, self.msg)
+    }
 }
 
 #[derive(Clone)]
@@ -100,6 +119,23 @@ pub struct Snapshot {
     pub upstreams: Vec<UpstreamState>,
     pub active: Option<String>,
     pub logs: Vec<LogEntry>,
+}
+
+impl Snapshot {
+    /// 全部上游合计：`(累计上行, 累计下行, 连接数, 当前速率上行, 当前速率下行)`。
+    pub fn traffic_totals(&self) -> (u64, u64, u64, u64, u64) {
+        self.upstreams
+            .iter()
+            .fold((0u64, 0u64, 0u64, 0u64, 0u64), |(a, b, c, ru, rd), u| {
+                (
+                    a + u.bytes_up,
+                    b + u.bytes_down,
+                    c + u.conns,
+                    ru + u.rate_up,
+                    rd + u.rate_down,
+                )
+            })
+    }
 }
 
 /// 引擎状态的唯一持有者，GUI 与异步任务都通过它读写。
@@ -128,6 +164,13 @@ impl StateStore {
                 conns: 0,
                 bytes_up: 0,
                 bytes_down: 0,
+                rate_up: 0,
+                rate_down: 0,
+                peak_up: 0,
+                peak_down: 0,
+                peak_at: None,
+                checks_total: 0,
+                checks_failed: 0,
                 testing: false,
             })
             .collect();
@@ -164,6 +207,52 @@ impl StateStore {
         if let Some(s) = self.stats.get(idx) {
             s.bytes_up.fetch_add(up, Ordering::Relaxed);
             s.bytes_down.fetch_add(down, Ordering::Relaxed);
+        }
+    }
+
+    /// 当前累计上下行字节数（速率采样的数据源）。
+    pub fn traffic_totals(&self, idx: usize) -> (u64, u64) {
+        match self.stats.get(idx) {
+            Some(s) => (
+                s.bytes_up.load(Ordering::Relaxed),
+                s.bytes_down.load(Ordering::Relaxed),
+            ),
+            None => (0, 0),
+        }
+    }
+
+    /// 健康检查结束时记账一次结果。
+    pub fn record_check(&self, idx: usize, ok: bool) {
+        if let Some(s) = self.stats.get(idx) {
+            s.checks_total.fetch_add(1, Ordering::Relaxed);
+            if !ok {
+                s.checks_failed.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
+
+    /// 清零本次会话的统计：累计流量/连接数、速率与峰值、健康检查计数。
+    /// 采样任务的基准会在下一次采样时自动重新对齐。
+    pub fn reset_stats(&self) {
+        for s in &self.stats {
+            s.conns.store(0, Ordering::Relaxed);
+            s.bytes_up.store(0, Ordering::Relaxed);
+            s.bytes_down.store(0, Ordering::Relaxed);
+            s.checks_total.store(0, Ordering::Relaxed);
+            s.checks_failed.store(0, Ordering::Relaxed);
+        }
+        let mut snap = self.snap.lock().unwrap();
+        for u in &mut snap.upstreams {
+            u.conns = 0;
+            u.bytes_up = 0;
+            u.bytes_down = 0;
+            u.rate_up = 0;
+            u.rate_down = 0;
+            u.peak_up = 0;
+            u.peak_down = 0;
+            u.peak_at = None;
+            u.checks_total = 0;
+            u.checks_failed = 0;
         }
     }
 
@@ -253,6 +342,8 @@ impl StateStore {
                 u.conns = s.conns.load(Ordering::Relaxed);
                 u.bytes_up = s.bytes_up.load(Ordering::Relaxed);
                 u.bytes_down = s.bytes_down.load(Ordering::Relaxed);
+                u.checks_total = s.checks_total.load(Ordering::Relaxed);
+                u.checks_failed = s.checks_failed.load(Ordering::Relaxed);
             }
             u.testing = self
                 .testing
