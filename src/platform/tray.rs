@@ -4,10 +4,11 @@
 //! 健康/延迟/流量信息；信息行由 [`TrayHandle::sync_snapshot`] 每帧刷新，
 //! 上游子菜单仅在内容签名变化时重建，避免频繁增删原生菜单项。
 //!
-//! ℹ 本模块刻意保持单文件、无 `#[cfg]`：rustc 1.95 的 deathness 分析对
-//! 「按 cfg 切换的托盘模块对」（无论自包含还是共享/re-export 形态）都会
-//! ICE（check_mod_deathness，详见 platform/mod.rs 顶部说明），因此 Linux
-//! 侧仍编译完整托盘代码、仅运行时降级跳过。待工具链修复后可再拆分。
+//! ℹ 本模块刻意保持单文件、无 `#[cfg]`：tray-icon 对各平台提供统一 API，
+//! Windows 走原生后端，Linux 走 ksni（D-Bus SNI，后端自管工作线程、无需
+//! GTK 主循环），同一份代码两端生效。menu/muda 的项对象非 `Send`，
+//! [`TrayHandle::sync_snapshot`] 等菜单操作必须留在创建托盘的线程
+//! （即 egui 主线程帧回调）中调用——迁移到其他线程前需重新设计。
 
 use std::sync::mpsc::Receiver;
 
@@ -147,13 +148,9 @@ pub struct TrayHandle {
 }
 
 impl TrayHandle {
-    /// Linux 暂不启用托盘（KSNI 属后续阶段）。不用 `#[cfg]` 而用运行时
-    /// `cfg!` 判断：规避 rustc 1.95 deathness ICE（见文件头与 platform/mod.rs）。
+    /// 全平台统一构建：Windows 走原生后端；Linux 走 ksni（D-Bus SNI），
+    /// 左键 activate → [`TrayIconEvent`]，右键菜单由托盘宿主渲染。
     pub fn new(ctx: egui::Context) -> Result<Self> {
-        if !cfg!(windows) {
-            let _ = ctx;
-            anyhow::bail!("Linux 托盘将在后续版本支持（KSNI 计划中）");
-        }
         let icon_running = circle_icon(GREEN)?;
         let icon_stopped = circle_icon(GRAY)?;
         let icon_error = circle_icon(RED)?;

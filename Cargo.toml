@@ -25,12 +25,13 @@ tray-icon = "0.25"
 
 # Linux 需要 x11/wayland 窗口后端（winit 默认无后端时报 platform not supported）。
 # 渲染器实测必须用 wgpu：glow 在部分 NVIDIA/Windows 组合下整屏空白（2026-09 实测回退）。
-# 托盘在 Linux 运行时降级跳过（platform/tray.rs 单文件形态，原因见该文件头），
-# 因此 Linux 侧需要能编译的 tray-icon：关闭默认特性避开 libappindicator/libxdo
-# 系统库依赖，用 ksni（纯 Rust zbus 的 D-Bus SNI）+ muda-gtk3（menu 编译后端）
+# Linux 托盘走 ksni（纯 Rust zbus 的 D-Bus SNI，后端自管工作线程），
+# 无需 GTK/libappindicator/libxdo 系统库；ksni 特性自动启用 muda 的
+# snapshot 能力（菜单以线程安全快照经 D-Bus 暴露，点击回调同 Windows 路径）。
+# 菜单运行于 muda noop 后端：无 GTK 主循环，菜单项状态存于 muda 层。
 [target.'cfg(target_os = "linux")'.dependencies]
 eframe = { version = "0.36", default-features = false, features = ["x11", "wayland"] }
-tray-icon = { version = "0.25", default-features = false, features = ["muda-gtk3", "ksni"] }
+tray-icon = { version = "0.25", default-features = false, features = ["ksni"] }
 
 # 体积优化：opt-level "z" + fat LTO 实测 13.6MB → 9.8MB（-28%）。
 # 刻意不用 panic = "abort"（可再省 ~0.7MB）：tokio 依赖 unwinding 把单条

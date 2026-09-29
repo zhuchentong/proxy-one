@@ -64,7 +64,7 @@
 | --- | --- | --- |
 | Proxy engine (mixed entry, failover, health checks) | ✅ | ✅ |
 | GUI | ✅ | ✅ (Wayland / X11) |
-| Tray icon | ✅ | Planned (KSNI route; currently skipped with a log entry, proxying unaffected) |
+| Tray icon | ✅ | ✅ (KSNI/D-Bus, requires a tray host such as waybar) |
 | System proxy takeover | WinINet registry with snapshot/restore/conflict protection | Writes `~/.config/environment.d/proxyone.conf`; takes effect on next login, removed on switch-off |
 | Run at login | HKCU Run registry key | XDG autostart `~/.config/autostart/proxyone.desktop` (sway needs `dex -a` in-session) |
 | Auto-update | ✅ | ✅ (atomic rename replacement on Linux) |
@@ -74,13 +74,24 @@
 
 ### Download or build
 
-**Option 1 — prebuilt binaries (recommended)**
+**Option 1 — install script (recommended on Linux)**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zhuchentong/proxy-one/main/install.sh | bash
+```
+
+- Installs to `~/.local/bin/proxyone` by default; `--system` targets `/usr/local/bin` (sudo), `--prefix DIR` for a custom location.
+- Downloads the latest GitHub release with sha256 verification; honors the `https_proxy` environment variable — set a proxy and retry if the network is restricted.
+- Requires a recent distro (glibc ≥ 2.35, OpenSSL 3); missing shared libraries are detected after install with a warning.
+- Uninstall: `rm ~/.local/bin/proxyone`.
+
+**Option 2 — manual download**
 
 1. Grab `proxyone.exe` (or `proxyone-linux-x64` on Linux) from the [Releases](https://github.com/zhuchentong/proxy-one/releases) page.
 2. Launch it — the GUI opens and proxying starts immediately. On first run a default config is generated in the user config directory (two example upstreams, edit as needed).
 3. Point your applications' proxy settings at `127.0.0.1:8888` (HTTP or SOCKS5, either works).
 
-**Option 2 — build from source**
+**Option 3 — build from source**
 
 ```bash
 cargo build --release
@@ -130,6 +141,8 @@ Compact card layout, default window 440×700:
 - **Left click**: show/hide the main window (hiding keeps the engine proxying in the background).
 - **Right-click menu**: show window / engine running (checked = started) / system proxy (checked = takeover) / test all upstreams / upstream status (health, latency, traffic per upstream) / open config file / quit.
 - Closing the window with ✕ hides to the tray; use the tray menu's "Quit" to exit fully.
+
+> The Linux tray uses KSNI (D-Bus StatusNotifierItem): left click shows/hides the main window, and the context menu is rendered by the tray host (waybar, KDE, etc.); tooltip presentation depends on the host. In minimal sessions without a tray host the app degrades to no tray with a log entry; proxying is unaffected.
 
 > Windows 11: if the tray icon is hidden, enable it under taskbar settings, or set `HKCU\Control Panel\NotifyIconSettings\<id>\IsPromoted` to `1`.
 
@@ -252,7 +265,7 @@ src/
     autostart_linux.rs    Run at login (Linux): XDG autostart desktop entry
     sysproxy_windows.rs   System proxy (Windows): WinINet registry + snapshot/crash-healing/conflict protection
     sysproxy_linux.rs     System proxy (Linux): environment.d snippet
-    tray.rs             Tray: three-state icon / context menu (Windows live, Linux degrades at runtime)
+    tray.rs             Tray: three-state icon / context menu (Windows native, Linux KSNI/D-Bus)
   ui/
     ui.rs               App state & eframe orchestration (logic: tray/close interception + layout)
     update_flow.rs      Update UI orchestration: check/download threads & state machine
@@ -316,7 +329,7 @@ The GUI requires a Wayland or X11 session; `noto-fonts-cjk` is recommended for C
 
 **Platform & deployment**
 
-- Linux tray icon not yet supported (planned; the KSNI route is preferred — the GUI runs fine, just no tray)
+- The Linux tray requires an SNI tray host in the session (waybar tray module, KDE, etc.); without one it degrades to no tray
 - Linux system proxy is an environment.d snippet (effective at next login); no live takeover of running programs
 - The default 8-second health checks amount to ~10k generate_204 probes per upstream per day — harmless by design; adjust the interval in the GUI if desired
 

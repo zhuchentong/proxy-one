@@ -64,7 +64,7 @@
 | --- | --- | --- |
 | 代理引擎（混合入口、故障切换、健康检查） | ✅ | ✅ |
 | GUI | ✅ | ✅（Wayland / X11） |
-| 托盘图标 | ✅ | 计划支持（当前跳过并记录日志，不影响代理） |
+| 托盘图标 | ✅ | ✅（KSNI/D-Bus，需托盘宿主如 waybar） |
 | 系统代理接管 | WinINet 注册表，快照/恢复/冲突保护 | 写 `~/.config/environment.d/proxyone.conf`，下次登录生效，关闭即删除恢复 |
 | 开机启动 | HKCU Run 注册表 | XDG autostart `~/.config/autostart/proxyone.desktop`（sway 需会话内有 `dex -a`） |
 | 自动更新 | ✅ | ✅（Linux 侧为 rename 原子替换） |
@@ -74,13 +74,24 @@
 
 ### 获取与运行
 
-**方式一：下载预编译版本（推荐）**
+**方式一：安装脚本（Linux 推荐）**
 
-1. 从 [Releases](https://github.com/zhuchentong/proxy-one/releases) 下载 `proxyone.exe`（Linux 下载 `proxyone-linux-x64`）；
+```bash
+curl -fsSL https://raw.githubusercontent.com/zhuchentong/proxy-one/main/install.sh | bash
+```
+
+- 默认安装到 `~/.local/bin/proxyone`；`--system` 安装到 `/usr/local/bin`（需 sudo），`--prefix DIR` 自定义位置；
+- 自动下载 GitHub Releases 最新版并校验 sha256；下载遵循 `https_proxy` 环境变量，网络受限时设置代理后重试即可；
+- 需较新发行版（glibc ≥ 2.35、OpenSSL 3），安装后自动检查缺失动态库并提示；
+- 卸载：`rm ~/.local/bin/proxyone`。
+
+**方式二：手动下载**
+
+1. 从 [Releases](https://github.com/zhuchentong/proxy-one/releases) 下载 `proxyone.exe`（Linux 可改下载 `proxyone-linux-x64`）；
 2. 双击运行——GUI 打开，代理自动开始；首次运行会在用户配置目录生成默认配置（含两个示例上游，可按需修改）；
 3. 把应用的代理设置指向 `127.0.0.1:8888`（HTTP 或 SOCKS5 均可）。
 
-**方式二：从源码构建**
+**方式三：从源码构建**
 
 ```bat
 cargo build --release
@@ -130,6 +141,8 @@ curl -x socks5h://127.0.0.1:8888 https://www.google.com
 - **左键单击**：显示 / 隐藏主窗口（隐藏后引擎继续在后台代理，不受影响）。
 - **右键菜单**：显示主窗口 / 引擎运行中（勾选 = 启动，点击切换）/ 系统代理（勾选 = 接管）/ 测试全部上游 / 上游状态（各上游健康/延迟/流量）/ 打开配置文件 / 退出。
 - 点击窗口 ✕ 默认隐藏到托盘；彻底退出请使用托盘菜单「退出」。
+
+> Linux 托盘基于 KSNI（D-Bus StatusNotifierItem）：左键单击显示/隐藏主窗口，右键菜单由托盘宿主（waybar、KDE 等）渲染；tooltip 呈现方式以宿主为准。无托盘宿主的极简会话中会降级为无托盘并记录日志，不影响代理。
 
 > Windows 11 下若需托盘图标常显：在任务栏「设置 > 个人设置」中开启，或将 `HKCU\Control Panel\NotifyIconSettings\<id>\IsPromoted` 设为 `1`。
 
@@ -252,7 +265,7 @@ src/
     autostart_linux.rs    开机启动（Linux）：XDG autostart 桌面项
     sysproxy_windows.rs   系统代理（Windows）：WinINet 注册表 + 快照恢复/崩溃自愈/冲突保护
     sysproxy_linux.rs     系统代理（Linux）：environment.d 片段写入
-    tray.rs           托盘：三态图标/右键菜单（Windows 实装，Linux 运行时降级）
+    tray.rs           托盘：三态图标/右键菜单（Windows 原生，Linux KSNI/D-Bus）
   ui/
     ui.rs            App 状态与 eframe 编排（logic 托盘/关闭拦截 + 布局）
     update_flow.rs   自动更新的 UI 编排：检查/下载后台线程与状态机
@@ -316,7 +329,7 @@ GUI 依赖 Wayland 或 X11 会话；中文字体建议安装 `noto-fonts-cjk`。
 
 **平台与部署**
 
-- Linux 托盘图标暂未支持（阶段 3 计划，倾向 KSNI 路线；当前 GUI 正常运行，仅无托盘）
+- Linux 托盘依赖会话内的 SNI 托盘宿主（waybar tray 模块、KDE 等）；无宿主时降级为无托盘
 - Linux 系统代理为 environment.d 片段（下次登录生效），不支持已运行程序的即时接管
 - 默认 8s 间隔的健康检查对每个上游每天约 1 万次 204 探测，量级无害；如需调整可在 GUI 修改检查间隔
 
