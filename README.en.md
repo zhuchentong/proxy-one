@@ -81,9 +81,10 @@ curl -fsSL https://raw.githubusercontent.com/zhuchentong/proxy-one/main/install.
 ```
 
 - Installs to `~/.local/bin/proxyone` by default; `--system` targets `/usr/local/bin` (sudo), `--prefix DIR` for a custom location.
+- Also writes a desktop entry (`~/.local/share/applications/proxyone.desktop`), so `proxyone` is searchable in app launchers (KRunner / rofi / wofi, e.g. via Alt+Space) right after install.
 - Downloads the latest GitHub release with sha256 verification; honors the `https_proxy` environment variable — set a proxy and retry if the network is restricted.
 - Requires a recent distro (glibc ≥ 2.35, OpenSSL 3); missing shared libraries are detected after install with a warning.
-- Uninstall: `rm ~/.local/bin/proxyone`.
+- Uninstall: `rm ~/.local/bin/proxyone ~/.local/share/applications/proxyone.desktop`.
 
 **Option 2 — manual download**
 

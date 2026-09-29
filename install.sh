@@ -12,7 +12,9 @@
 # 说明:
 #   - 从 GitHub Releases latest 直链下载 proxyone-linux-x64 与 .sha256（不走 API，无 rate limit）；
 #   - 下载遵循 https_proxy / http_proxy 环境变量（curl/wget 原生行为）；
-#   - 安装后用 ldd 冒烟检查缺失动态库（本程序需 glibc >= 2.35 与 OpenSSL 3）。
+#   - 安装后用 ldd 冒烟检查缺失动态库（本程序需 glibc >= 2.35 与 OpenSSL 3）；
+#   - 同时写入 XDG 桌面项（默认 ~/.local/share/applications/proxyone.desktop），
+#     应用启动器（KRunner / rofi / wofi 等，Alt+Space 呼出）即可搜索到 proxyone。
 set -euo pipefail
 
 REPO="zhuchentong/proxy-one"
@@ -81,6 +83,23 @@ fetch() { # fetch <url> <输出文件>
   fi
 }
 
+install_to() { # install_to <src> <dest_dir> <mode> <目标文件名>
+  local src="$1" dir="$2" mode="$3" name="$4" sud=""
+  if ! mkdir -p "$dir" 2>/dev/null; then
+    [ "$(id -u)" -eq 0 ] || sud="sudo"
+    log "${dir} 无法直接创建，改用 sudo"
+    $sud mkdir -p "$dir"
+  fi
+  if [ ! -w "$dir" ] && [ "$(id -u)" -ne 0 ]; then
+    sud="sudo"
+  fi
+  if [ -n "$sud" ]; then
+    $sud install -m "$mode" "$src" "${dir}/${name}"
+  else
+    install -m "$mode" "$src" "${dir}/${name}"
+  fi
+}
+
 TMP_DL="$(mktemp -d "${TMPDIR:-/tmp}/proxyone-install.XXXXXX")"
 trap 'rm -rf "$TMP_DL"' EXIT
 
@@ -96,20 +115,25 @@ if ! (cd "$TMP_DL" && sha256sum -c "${ASSET}.sha256" >/dev/null 2>&1); then
 fi
 
 # ---------------------------------------------------------------- 安装
-SUDO=""
-if ! mkdir -p "$INSTALL_DIR" 2>/dev/null; then
-  [ "$(id -u)" -eq 0 ] || SUDO="sudo"
-  log "${INSTALL_DIR} 无法直接创建，改用 sudo"
-  $SUDO mkdir -p "$INSTALL_DIR"
+install_to "${TMP_DL}/${ASSET}" "$INSTALL_DIR" 755 "proxyone"
+
+# ---------------------------------------------------------------- 桌面项（应用启动器可搜索）
+DESKTOP_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+if [ "$SYSTEM" -eq 1 ]; then
+  DESKTOP_DIR="/usr/local/share/applications"
 fi
-if [ ! -w "$INSTALL_DIR" ] && [ "$(id -u)" -ne 0 ]; then
-  SUDO="sudo"
-fi
-if [ -n "$SUDO" ]; then
-  $SUDO install -m 755 "${TMP_DL}/${ASSET}" "${INSTALL_DIR}/proxyone"
-else
-  install -m 755 "${TMP_DL}/${ASSET}" "${INSTALL_DIR}/proxyone"
-fi
+log "安装桌面项（可在应用启动器中搜索 proxyone）"
+cat > "$TMP_DL/proxyone.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=proxyone
+Comment=轻量级代理故障切换网关（proxy failover gateway）
+Exec="$INSTALL_DIR/proxyone"
+Terminal=false
+Categories=Network;
+Keywords=proxy;socks5;http;代理;
+EOF
+install_to "$TMP_DL/proxyone.desktop" "$DESKTOP_DIR" 644 "proxyone.desktop"
 
 # ---------------------------------------------------------------- 安装后检查
 log "检查动态库依赖"
@@ -132,4 +156,4 @@ esac
 
 log "安装完成: ${INSTALL_DIR}/proxyone"
 printf '启动: %s/proxyone（GUI）或 %s/proxyone --headless（无界面常驻）\n' "$INSTALL_DIR" "$INSTALL_DIR"
-printf '卸载: rm %s/proxyone\n' "$INSTALL_DIR"
+printf '卸载: rm %s/proxyone %s/proxyone.desktop\n' "$INSTALL_DIR" "$DESKTOP_DIR"

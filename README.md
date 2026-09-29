@@ -81,9 +81,10 @@ curl -fsSL https://raw.githubusercontent.com/zhuchentong/proxy-one/main/install.
 ```
 
 - 默认安装到 `~/.local/bin/proxyone`；`--system` 安装到 `/usr/local/bin`（需 sudo），`--prefix DIR` 自定义位置；
+- 同时写入桌面项（`~/.local/share/applications/proxyone.desktop`），安装后即可在应用启动器（KRunner / rofi / wofi 等，如 Alt+Space 呼出）中搜索 `proxyone`；
 - 自动下载 GitHub Releases 最新版并校验 sha256；下载遵循 `https_proxy` 环境变量，网络受限时设置代理后重试即可；
 - 需较新发行版（glibc ≥ 2.35、OpenSSL 3），安装后自动检查缺失动态库并提示；
-- 卸载：`rm ~/.local/bin/proxyone`。
+- 卸载：`rm ~/.local/bin/proxyone ~/.local/share/applications/proxyone.desktop`。
 
 **方式二：手动下载**
 

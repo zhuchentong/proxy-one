@@ -7,6 +7,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT="$ROOT/install.sh"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/proxyone-install-test.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
+# 隔离 XDG 数据目录，避免测试污染真实的 ~/.local/share/applications
+export XDG_DATA_HOME="$WORK/xdg"
 
 pass=0
 fail=0
@@ -53,6 +55,13 @@ check "安装到 \$prefix/bin/proxyone" test -x "$dest/bin/proxyone"
 [ -x "$dest/bin/proxyone" ] && check "安装产物可执行且内容正确" test "$("$dest/bin/proxyone")" = "fixture-ok"
 check "成功输出包含安装路径" grep -qF "$dest/bin/proxyone" "$WORK/out1"
 check "非 PATH 目录安装后给出 PATH 提示" grep -q "PATH" "$WORK/out1"
+
+# ---------------------------------------------------------------- 用例 1b: 桌面项（launcher 可搜索）
+desktop="$WORK/xdg/applications/proxyone.desktop"
+check "桌面项已写入 XDG applications" test -f "$desktop"
+check "桌面项 Exec 为安装绝对路径" grep -qF "$dest/bin/proxyone" "$desktop"
+check "桌面项含 Keywords 关键字" grep -q "^Keywords=" "$desktop"
+check "卸载提示包含桌面项" grep -q "proxyone.desktop" "$WORK/out1"
 
 # ---------------------------------------------------------------- 用例 2: sha256 校验失败
 dir="$WORK/fixture2"; dest="$WORK/dest2"; make_bad_fixture "$dir"
