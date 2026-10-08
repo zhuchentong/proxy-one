@@ -191,7 +191,12 @@ impl StateStore {
             }),
             stats,
             testing,
-            file: Mutex::new(FileLogger::open(crate::config::logs_dir())),
+            // 测试构建不落盘：cargo test 会构造 StateStore，避免污染用户真实日志
+            file: Mutex::new(FileLogger::open(if cfg!(test) {
+                None
+            } else {
+                crate::config::logs_dir()
+            })),
         }
     }
 

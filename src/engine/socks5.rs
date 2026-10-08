@@ -6,7 +6,7 @@ use tokio::net::TcpStream;
 use super::router;
 use super::state::EngineCtx;
 use super::state::LogLevel;
-use super::stream::{CountingStream, traffic_callbacks};
+use super::stream::{CountingStream, noop_callbacks, traffic_callbacks};
 
 async fn socks_reply(stream: &mut TcpStream, code: u8) {
     let _ = stream
@@ -94,8 +94,11 @@ pub async fn handle(mut stream: TcpStream, ctx: Arc<EngineCtx>) {
     }
 
     match router::connect_target(&ctx, "SOCKS5", &host, port).await {
-        Ok((idx, up)) => {
-            let (on_write, on_read) = traffic_callbacks(ctx.state.clone(), idx);
+        Ok((route, up)) => {
+            let (on_write, on_read) = match route {
+                router::Route::Upstream(idx) => traffic_callbacks(ctx.state.clone(), idx),
+                router::Route::Direct => noop_callbacks(),
+            };
             let mut up = CountingStream::new(up, on_write, on_read);
             let _ = stream
                 .write_all(&[0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0])

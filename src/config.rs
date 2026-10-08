@@ -32,6 +32,10 @@ pub struct General {
     /// 用户意图：引擎运行时把 Windows 系统代理指向监听地址（跨重启保持）
     #[serde(default)]
     pub sysproxy: bool,
+    /// 排除名单：命中的目标直连、不经上游。匹配语义见
+    /// `engine::router::is_bypassed`（域名后缀 / `*.子域` / `前缀*` / IP 字面量）。
+    #[serde(default = "d_bypass")]
+    pub bypass_hosts: Vec<String>,
 }
 
 impl Default for General {
@@ -41,8 +45,25 @@ impl Default for General {
             theme: d_theme(),
             forward_log: d_forward_log(),
             sysproxy: false,
+            bypass_hosts: d_bypass(),
         }
     }
+}
+
+fn d_bypass() -> Vec<String> {
+    ["localhost", "127.*", "::1", "192.168.*"]
+        .into_iter()
+        .map(str::to_string)
+        .collect()
+}
+
+/// 把设置页多行文本解析成排除名单：按行拆分、去两端空白、丢空行（保持出现顺序）。
+pub(crate) fn parse_host_list(text: &str) -> Vec<String> {
+    text.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 fn d_listen() -> String {
@@ -377,5 +398,30 @@ mod tests {
     fn theme_defaults_to_dark_for_old_configs() {
         let parsed: Config = toml::from_str("[general]\nlisten = \"127.0.0.1:1\"\n").unwrap();
         assert_ne!(parsed.general.theme, "light");
+    }
+
+    #[test]
+    fn bypass_hosts_default_when_key_missing() {
+        let parsed: Config = toml::from_str("[general]\nlisten = \"127.0.0.1:1\"\n").unwrap();
+        assert_eq!(
+            parsed.general.bypass_hosts,
+            ["localhost", "127.*", "::1", "192.168.*"]
+        );
+    }
+
+    #[test]
+    fn bypass_hosts_preserved_when_present() {
+        let parsed: Config = toml::from_str("[general]\nbypass_hosts = [\"a.com\"]\n").unwrap();
+        assert_eq!(parsed.general.bypass_hosts, ["a.com"]);
+    }
+
+    #[test]
+    fn parse_host_list_splits_trims_and_drops_blank_lines() {
+        assert_eq!(
+            parse_host_list(" a.com \n\nb.com\n\n\n   \n*.c.com"),
+            ["a.com", "b.com", "*.c.com"]
+        );
+        assert!(parse_host_list("  \n\t\n").is_empty());
+        assert!(parse_host_list("").is_empty());
     }
 }

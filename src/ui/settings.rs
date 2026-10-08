@@ -81,6 +81,30 @@ impl App {
                 }
             });
             ui.add_space(6.0);
+            ui.label(
+                egui::RichText::new("排除名单（命中直连，不经上游）")
+                    .size(SZ_SMALL)
+                    .color(p.weak),
+            );
+            if ui
+                .add(
+                    egui::TextEdit::multiline(&mut self.bypass_text)
+                        .desired_rows(3)
+                        .desired_width(ui.available_width())
+                        .font(egui::TextStyle::Monospace),
+                )
+                .changed()
+            {
+                self.dirty = true;
+            }
+            ui.label(
+                egui::RichText::new(
+                    "每行一条：example.com 含子域；*.a.com 仅子域；192.168.* 前缀通配；IP 精确",
+                )
+                .size(SZ_TINY)
+                .color(p.weak),
+            );
+            ui.add_space(6.0);
             let mut on = self.dark;
             if switch_row(ui, self.dark, "深色主题", "浅色 / 深色即时切换", &mut on) {
                 self.toggle_theme(ui.ctx());

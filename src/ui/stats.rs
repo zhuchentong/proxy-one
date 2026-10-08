@@ -61,7 +61,7 @@ impl App {
                 }
                 if self.cfg.upstreams.is_empty() {
                     ui.label(
-                        egui::RichText::new("没有配置任何上游")
+                        egui::RichText::new("未配置上游，请求将全部直连")
                             .size(SZ_SMALL)
                             .color(p.weak),
                     );

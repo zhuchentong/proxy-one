@@ -34,6 +34,8 @@ pub struct App {
     pub(crate) new_name: String,
     pub(crate) new_addr: String,
     pub(crate) new_kind: config::UpstreamKind,
+    /// 排除名单的多行编辑缓冲：每行一条，保存时解析进 `cfg.general.bypass_hosts`。
+    pub(crate) bypass_text: String,
     pub(crate) new_top: bool,
     pub(crate) pending_action: Option<RowAction>,
     pub(crate) autostart: bool,
@@ -68,6 +70,7 @@ impl App {
     pub fn new(loaded: config::LoadedConfig) -> Self {
         let dark = loaded.config.general.theme != "light";
         let sysproxy_on = loaded.config.general.sysproxy;
+        let bypass_text = loaded.config.general.bypass_hosts.join("\n");
         let engine = EngineHandle::new(&loaded.config);
         let (update_tx, update_rx) = std::sync::mpsc::channel();
         let mut app = App {
@@ -81,6 +84,7 @@ impl App {
             new_name: String::new(),
             new_addr: String::new(),
             new_kind: config::UpstreamKind::Auto,
+            bypass_text,
             new_top: false,
             pending_action: None,
             autostart: crate::platform::autostart::is_enabled(),
@@ -138,6 +142,8 @@ impl App {
     }
 
     pub(crate) fn save_and_apply(&mut self) {
+        // 排除名单缓冲先落回配置，与其余字段同批保存生效
+        self.cfg.general.bypass_hosts = config::parse_host_list(&self.bypass_text);
         match config::save(&self.cfg_path, &self.cfg) {
             Ok(()) => self.notify(("已保存 config.toml".into(), theme::GREEN)),
             Err(e) => {

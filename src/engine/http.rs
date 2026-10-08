@@ -9,7 +9,7 @@ use tokio::net::TcpStream;
 use super::router;
 use super::state::EngineCtx;
 use super::state::LogLevel;
-use super::stream::{CountingStream, read_head, traffic_callbacks};
+use super::stream::{CountingStream, noop_callbacks, read_head, traffic_callbacks};
 use super::upstream;
 use super::url::{authority_path, split_host_port};
 
@@ -112,9 +112,13 @@ async fn handle_connect(
         return;
     };
     match router::connect_target(&ctx, "CONNECT", &host, port).await {
-        Ok((idx, up)) => {
-            // 上游流包一层实时记账：转发字节随传输入账（含 CONNECT 首段的 leftover）
-            let (on_write, on_read) = traffic_callbacks(ctx.state.clone(), idx);
+        Ok((route, up)) => {
+            // 上游流包一层实时记账：转发字节随传输入账（含 CONNECT 首段的 leftover）；
+            // 直连不经上游，无归属即不记账
+            let (on_write, on_read) = match route {
+                router::Route::Upstream(idx) => traffic_callbacks(ctx.state.clone(), idx),
+                router::Route::Direct => noop_callbacks(),
+            };
             let mut up = CountingStream::new(up, on_write, on_read);
             if stream.write_all(CONNECTION_ESTABLISHED).await.is_err() {
                 return;
@@ -141,12 +145,18 @@ async fn handle_plain(mut stream: TcpStream, ctx: Arc<EngineCtx>, req: Request, 
 
     let upgrade = req.header("upgrade").is_some();
     match router::connect_target(&ctx, &req.method, &host, port).await {
-        Ok((idx, up)) => {
+        Ok((route, up)) => {
             // 同 CONNECT：包装流实时记账，改写后的请求头也是上行流量
-            let (on_write, on_read) = traffic_callbacks(ctx.state.clone(), idx);
+            let (on_write, on_read) = match route {
+                router::Route::Upstream(idx) => traffic_callbacks(ctx.state.clone(), idx),
+                router::Route::Direct => noop_callbacks(),
+            };
             let mut up = CountingStream::new(up, on_write, on_read);
-            // Proxy-Authorization 逐跳生效：拿到上游后才能按其类型补凭据
-            let proxy_auth = upstream::proxy_auth_header(&ctx, idx).await;
+            // Proxy-Authorization 逐跳生效：拿到上游后才能按其类型补凭据；直连无需代理凭据
+            let proxy_auth = match route {
+                router::Route::Upstream(idx) => upstream::proxy_auth_header(&ctx, idx).await,
+                router::Route::Direct => None,
+            };
             let new_head = build_origin_head(
                 &req,
                 &path,

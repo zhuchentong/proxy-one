@@ -166,7 +166,7 @@ async fn engine_main(
         format!("✅ 开始监听 {addr}（HTTP + SOCKS5 混合入口）"),
     );
     if cfg.upstreams.is_empty() {
-        state.log(LogLevel::Warn, "未配置任何上游，请求将全部失败");
+        state.log(LogLevel::Warn, "未配置任何上游，请求将全部直连");
     }
 
     let srv = tokio::spawn(server::run(listener, ctx.clone(), stop_rx.clone()));

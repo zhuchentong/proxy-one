@@ -85,6 +85,13 @@ pub fn traffic_callbacks(
     (on_write, on_read)
 }
 
+/// 直连（[`super::router::Route::Direct`]）使用的空记账回调：转发流量
+/// 不归属任何上游，不入累计与速率窗口。
+pub fn noop_callbacks() -> (TrafficCallback, TrafficCallback) {
+    let noop: TrafficCallback = Arc::new(|_| {});
+    (Arc::clone(&noop), noop)
+}
+
 /// 在 [`TcpStream`] 外再包一层"先返回 prefix 字节"的读视图。
 ///
 /// 建立 CONNECT/SOCKS5 隧道时，上游的应答头可能与应答体落在同一个 TCP
