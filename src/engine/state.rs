@@ -271,7 +271,7 @@ impl StateStore {
     /// 标记一次手动测试结束；计数归零后 GUI 的等待动画消失。
     pub fn end_testing(&self, idx: usize) {
         if let Some(t) = self.testing.get(idx) {
-            let _ = t.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
+            let _ = t.try_update(Ordering::Relaxed, Ordering::Relaxed, |c| {
                 Some(c.saturating_sub(1))
             });
         }
