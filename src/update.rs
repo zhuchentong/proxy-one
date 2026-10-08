@@ -215,6 +215,14 @@ fn write_new(bytes: &[u8]) -> Result<()> {
             new_path.display()
         )
     })?;
+    // install() 靠 rename 原子替换（权限位随文件走），这里必须补上可执行位，
+    // 否则 Linux 上 spawn 新版本报 Permission denied。
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&new_path, std::fs::Permissions::from_mode(0o755))
+            .with_context(|| format!("设置 {} 可执行位失败", new_path.display()))?;
+    }
     Ok(())
 }
 
@@ -353,6 +361,20 @@ mod tests {
     #[test]
     fn api_url_uses_repository_slug() {
         assert!(api_url().contains("/repos/zhuchentong/proxy-one/releases/latest"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn downloaded_new_file_is_executable() {
+        // 自动更新链路：write_new → install() 直接 rename 覆盖当前 exe，
+        // rename 保留权限位——.new 不带可执行位，spawn 新版本必报 EACCES。
+        let p = exe_sibling(".new").unwrap();
+        let _ = std::fs::remove_file(&p);
+        write_new(b"bytes").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&p).unwrap().permissions().mode();
+        assert_ne!(mode & 0o111, 0, ".new 应带可执行位");
+        let _ = std::fs::remove_file(&p);
     }
 
     #[test]
