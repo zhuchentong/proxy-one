@@ -65,7 +65,7 @@
 | Proxy engine (mixed entry, failover, health checks) | ✅ | ✅ |
 | GUI | ✅ | ✅ (Wayland / X11) |
 | Tray icon | ✅ | ✅ (KSNI/D-Bus, requires a tray host such as waybar) |
-| System proxy takeover | WinINet registry with snapshot/restore/conflict protection | Writes `~/.config/environment.d/proxyone.conf`; takes effect on next login, removed on switch-off |
+| System proxy takeover | WinINet registry with snapshot/restore/conflict protection | Writes `~/.config/environment.d/proxyone.conf` and refreshes the systemd user environment on the spot; newly launched desktop/service apps pick it up on restart, removed on switch-off |
 | Run at login | HKCU Run registry key | XDG autostart `~/.config/autostart/proxyone.desktop` (sway needs `dex -a` in-session) |
 | Auto-update | ✅ | ✅ (atomic rename replacement on Linux) |
 | Headless mode | ✅ | ✅ (a systemd user service is recommended) |
@@ -159,7 +159,7 @@ Enter via the "⚙" button in the main window; "← Back" or `Esc` returns:
 
 ## System proxy
 
-Both the settings page and the tray menu offer the switch; the state persists across restarts. The mechanism differs per platform (see [Platform support](#platform-support)): on Windows it takes effect immediately; on Linux the written environment.d snippet applies to systemd user sessions at the next login and does not affect already-running programs.
+Both the settings page and the tray menu offer the switch; the state persists across restarts. The mechanism differs per platform (see [Platform support](#platform-support)): on Windows it takes effect immediately; on Linux the snippet is written and the systemd user environment is refreshed right away (`daemon-reload`), so desktop/service apps started afterwards pick it up on restart; apps launched from a terminal inherit the login shell environment and need a re-login; already-running programs are unaffected.
 
 - **Enable**: points the WinINet system proxy (`Internet Settings` registry key) at the listen address and broadcasts the refresh, so running programs pick it up immediately; the previous values (ProxyEnable / ProxyServer / ProxyOverride / AutoConfigURL) are snapshotted to the data directory.
 - **Bypass list is appended, never overwritten**: `localhost;127.*;<local>` is added automatically; user entries are preserved verbatim.
@@ -331,7 +331,7 @@ The GUI requires a Wayland or X11 session; `noto-fonts-cjk` is recommended for C
 **Platform & deployment**
 
 - The Linux tray requires an SNI tray host in the session (waybar tray module, KDE, etc.); without one it degrades to no tray
-- Linux system proxy is an environment.d snippet (effective at next login); no live takeover of running programs
+- Linux system proxy is an environment.d snippet (newly launched desktop/service apps pick it up on restart; terminal apps need a re-login); no live takeover of running programs
 - The default 8-second health checks amount to ~10k generate_204 probes per upstream per day — harmless by design; adjust the interval in the GUI if desired
 
 ## License
