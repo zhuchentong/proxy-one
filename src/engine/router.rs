@@ -62,9 +62,7 @@ pub fn is_bypassed(host: &str, rules: &[String]) -> bool {
 fn normalize_host(s: &str) -> String {
     let s = s.trim().to_ascii_lowercase();
     let s = s.strip_suffix('.').unwrap_or(&s);
-    s.trim_start_matches('[')
-        .trim_end_matches(']')
-        .to_string()
+    s.trim_start_matches('[').trim_end_matches(']').to_string()
 }
 
 /// `host` 是 `domain` 的子域时返回剩余前缀（以 `.` 结尾），否则 `None`。
@@ -303,10 +301,9 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         let ctx = ctx_with(&["127.*"], false);
 
-        let (route, _up) =
-            connect_target(&ctx, "CONNECT", &addr.ip().to_string(), addr.port())
-                .await
-                .unwrap();
+        let (route, _up) = connect_target(&ctx, "CONNECT", &addr.ip().to_string(), addr.port())
+            .await
+            .unwrap();
         assert_eq!(route, Route::Direct);
 
         // 直连是真实 TCP 连接：listener 侧能 accept 到
@@ -336,10 +333,9 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         let ctx = ctx_with(&[], false);
 
-        let (route, _up) =
-            connect_target(&ctx, "CONNECT", &addr.ip().to_string(), addr.port())
-                .await
-                .unwrap();
+        let (route, _up) = connect_target(&ctx, "CONNECT", &addr.ip().to_string(), addr.port())
+            .await
+            .unwrap();
         assert_eq!(route, Route::Direct);
         let (_sock, _peer) = listener.accept().await.unwrap();
     }
