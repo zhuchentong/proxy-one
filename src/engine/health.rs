@@ -115,6 +115,23 @@ pub(crate) fn transition(
     Transition::None
 }
 
+/// 周期性检查失败时的日志策略（仅用于探测失败，成功路径不经过此函数）。
+///
+/// - 转 DOWN → [`LogLevel::Error`]（手动测试也保留，与既有行为一致）；
+/// - UP 下连续失败第 1 次 → [`LogLevel::Warn`]：每个失败段开头提示一次。
+///   注：`fail_threshold = 1` 时首次失败即转 DOWN，本分支不可达，属预期；
+/// - DOWN 后的重复失败 → `None` 静默：避免刷屏（既定取舍，
+///   如需长 DOWN 期间的心跳提醒可另行叠加降频日志）；
+/// - [`HealthStatus::Unknown`]（启动后尚未成功过）期间首败 → `None` 静默：
+///   启动即执行一轮检查，距 ERR DOWN 至多一轮，静默无害。
+fn failure_log_level(t: Transition, prev: HealthStatus, fail_streak: u32) -> Option<LogLevel> {
+    match (t, prev, fail_streak) {
+        (Transition::ToDown, _, _) => Some(LogLevel::Error),
+        (Transition::None, HealthStatus::Up, 1) => Some(LogLevel::Warn),
+        _ => None,
+    }
+}
+
 async fn check_one(ctx: Arc<EngineCtx>, idx: usize, manual: bool) {
     let target = match parse_http_target(&ctx.cfg.health.test_url) {
         Ok(t) => t,
@@ -175,7 +192,8 @@ async fn check_one(ctx: Arc<EngineCtx>, idx: usize, manual: bool) {
     let thr_ok = ctx.cfg.health.success_threshold.max(1);
     let thr_fail = ctx.cfg.health.fail_threshold.max(1);
 
-    // 手动测试总会给出一条结果日志；周期性检查只在状态变化时说话
+    // 手动测试总会给出一条结果日志；周期性检查仅在 UP 下首次失败（Warn 一次）
+    // 与转 DOWN（Err）时说话，DOWN 后的重复失败静默，避免刷屏
     if manual {
         match &outcome {
             Ok(()) => ctx.log(
@@ -211,28 +229,34 @@ async fn check_one(ctx: Arc<EngineCtx>, idx: usize, manual: bool) {
             }
         }
         Err(reason) => {
+            // prev 是"本次失败前"的状态，必须在 transition() 之前捕获，
+            // 顺序不可颠倒，否则 UP 下首败判定失效。
             let state_change = ctx.state.update(idx, |u| {
+                let prev = u.status;
                 u.last_check = Some(now);
-                transition(
+                let t = transition(
                     false,
                     &mut u.ok_streak,
                     &mut u.fail_streak,
                     thr_ok,
                     thr_fail,
                     &mut u.status,
-                )
+                );
+                (t, prev, u.fail_streak)
             });
-            match state_change {
-                Some(Transition::ToDown) => ctx.log(
-                    LogLevel::Error,
-                    format!("⛔ 上游 [{name}] 健康检查连续失败 {thr_fail} 次 → DOWN（{reason}）"),
-                ),
-                Some(_) if manual => {}
-                Some(_) => ctx.log(
-                    LogLevel::Warn,
-                    format!("上游 [{name}] 健康检查失败（{reason}）"),
-                ),
-                None => {}
+            if let Some((t, prev, fail_streak)) = state_change {
+                match failure_log_level(t, prev, fail_streak) {
+                    Some(LogLevel::Error) => ctx.log(
+                        LogLevel::Error,
+                        format!("⛔ 上游 [{name}] 健康检查连续失败 {thr_fail} 次 → DOWN（{reason}）"),
+                    ),
+                    // 手动测试已有 🔍 结果日志，Warn 抑制（既有行为）
+                    Some(LogLevel::Warn) if !manual => ctx.log(
+                        LogLevel::Warn,
+                        format!("上游 [{name}] 健康检查失败（{reason}）"),
+                    ),
+                    _ => {}
+                }
             }
         }
     }
@@ -307,5 +331,29 @@ mod tests {
             Transition::None
         );
         assert_eq!(ok_s, 6);
+    }
+
+    #[test]
+    fn failure_log_policy() {
+        // 转 DOWN → Error（手动/周期一致）
+        assert_eq!(
+            failure_log_level(Transition::ToDown, HealthStatus::Up, 2),
+            Some(LogLevel::Error)
+        );
+        // UP 下首败 → Warn
+        assert_eq!(
+            failure_log_level(Transition::None, HealthStatus::Up, 1),
+            Some(LogLevel::Warn)
+        );
+        // DOWN 后重复失败 → 静默
+        assert_eq!(
+            failure_log_level(Transition::None, HealthStatus::Down, 1),
+            None
+        );
+        // Unknown（启动未成功过）期间首败 → 静默
+        assert_eq!(
+            failure_log_level(Transition::None, HealthStatus::Unknown, 1),
+            None
+        );
     }
 }
