@@ -123,34 +123,40 @@ pub fn apply_theme(ctx: &egui::Context, dark: bool) {
 }
 
 /// 加载中文字体（按平台探测常见 CJK 字体路径），避免默认字体下的豆腐块。
+///
+/// ttc 集合需指定「简体 SC face」索引：解析器默认只读 ttc 的第一个
+/// face，而 NotoSansCJK-*.ttc 的 face 0 是日文 JP 变体（0=JP, 1=KR,
+/// 2=SC），日式字形会让部分汉字显示异常（如「复」明显偏窄）。
 pub fn install_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
-    // 跨平台探测链：Windows（雅黑/黑体/宋体）→ Linux（Noto CJK/文泉驿，Manjaro 装
-    // noto-fonts-cjk 即命中）。不存在的路径读取失败自动跳过。
-    let candidates = [
-        r"C:\Windows\Fonts\msyh.ttc",
-        r"C:\Windows\Fonts\simhei.ttf",
-        r"C:\Windows\Fonts\simsun.ttc",
-        "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/noto-cjk/NotoSansCJKsc-Regular.otf",
-        "/usr/share/fonts/wenquanyi/wqy-microhei/wqy-microhei.ttc",
+    // 跨平台探测链：Windows（雅黑/黑体/宋体）→ Linux（Noto CJK/文泉驿，Manjaro
+    // 装 noto-fonts-cjk 即命中）。不存在的路径读取失败自动跳过。
+    // egui 0.36 的 strong() 只影响颜色，全部文本共用同一字体栈。
+    let candidates: [(&str, u32); 6] = [
+        (r"C:\Windows\Fonts\msyh.ttc", 0),
+        (r"C:\Windows\Fonts\simhei.ttf", 0),
+        (r"C:\Windows\Fonts\simsun.ttc", 0),
+        ("/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc", 2),
+        ("/usr/share/fonts/noto-cjk/NotoSansCJKsc-Regular.otf", 0),
+        (
+            "/usr/share/fonts/wenquanyi/wqy-microhei/wqy-microhei.ttc",
+            0,
+        ),
     ];
-    for path in candidates {
+    for (path, index) in candidates {
         if let Ok(bytes) = std::fs::read(path) {
-            fonts.font_data.insert(
-                "cjk".to_owned(),
-                Arc::new(egui::FontData::from_owned(bytes)),
-            );
+            let mut font_data = egui::FontData::from_owned(bytes);
+            font_data.index = index;
             fonts
-                .families
-                .entry(egui::FontFamily::Proportional)
-                .or_default()
-                .push("cjk".to_owned());
-            fonts
-                .families
-                .entry(egui::FontFamily::Monospace)
-                .or_default()
-                .push("cjk".to_owned());
+                .font_data
+                .insert("cjk".to_owned(), Arc::new(font_data));
+            for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+                fonts
+                    .families
+                    .entry(family)
+                    .or_default()
+                    .push("cjk".to_owned());
+            }
             break;
         }
     }
