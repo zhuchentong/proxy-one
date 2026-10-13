@@ -111,7 +111,7 @@ cargo build --release
 
 ```bash
 curl -x http://127.0.0.1:8888 https://www.google.com
-curl -x http://127.0.0.1:8888 http://www.gstatic.com/generate_204
+curl -x http://127.0.0.1:8888 http://www.google.com/generate_204
 curl -x socks5h://127.0.0.1:8888 https://www.google.com
 ```
 
@@ -202,7 +202,7 @@ listen = "127.0.0.1:8888"
 [health]
 interval_secs = 8        # check interval
 timeout_secs = 4         # per-probe timeout
-test_url = "http://www.gstatic.com/generate_204"
+test_url = "http://www.google.com/generate_204"
 fail_threshold = 2       # N consecutive failures → mark DOWN
 success_threshold = 2    # N consecutive successes → recover (anti-flapping)
 

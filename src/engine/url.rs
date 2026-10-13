@@ -1,7 +1,7 @@
 //! 代理各处共用的 URL / authority 解析工具。
 
 /// 从 `host[:port][/path][?query]` 形式的字符串里拆出 authority 与 path。
-/// 常见输入如 `www.gstatic.com/generate_204`、`example.com?x=1`。
+/// 常见输入如 `www.google.com/generate_204`、`example.com?x=1`。
 pub fn authority_path(rest: &str) -> Option<(&str, String)> {
     // 忽略 userinfo（user:pass@host 中的前半段）
     let rest = rest.rsplit('@').next().unwrap_or(rest);

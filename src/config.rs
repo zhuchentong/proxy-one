@@ -111,7 +111,7 @@ fn d_timeout() -> u64 {
     4
 }
 fn d_test_url() -> String {
-    "http://www.gstatic.com/generate_204".into()
+    "http://www.google.com/generate_204".into()
 }
 fn d_fail() -> u32 {
     2
