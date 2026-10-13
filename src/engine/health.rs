@@ -255,8 +255,7 @@ async fn check_one(ctx: Arc<EngineCtx>, idx: usize, manual: bool) {
             });
             if let Some((t, prev, fail_streak)) = state_change {
                 // DOWN 心跳节流：按检查间隔折算出「约每 60s 一条」的失败次数
-                let warn_every =
-                    (60 / ctx.cfg.health.interval_secs.max(1)).max(1) as u32;
+                let warn_every = (60 / ctx.cfg.health.interval_secs.max(1)).max(1) as u32;
                 match failure_log_level(t, prev, fail_streak, warn_every) {
                     Some(LogLevel::Error) => ctx.log(
                         LogLevel::Error,
