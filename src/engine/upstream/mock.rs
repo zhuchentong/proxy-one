@@ -126,6 +126,78 @@ pub async fn socks5_proxy(user: &'static str, pass: &'static str) -> String {
     addr
 }
 
+/// HTTP mock（无认证）：回 CONNECT 确认后立即断开。
+/// 对隧道内后续到达的数据回 RST，模拟转发中途上游失联。
+pub async fn http_proxy_drop_after_reply() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap().to_string();
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut s, _)) = listener.accept().await else {
+                return;
+            };
+            tokio::spawn(async move {
+                if read_until_head_end(&mut s).await.is_some() {
+                    s.write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+                        .await
+                        .ok();
+                }
+                // s 在此 drop：半关闭转 RST，制造 copy_bidirectional 的 Err
+            });
+        }
+    });
+    addr
+}
+
+/// SOCKS5 mock（无认证）：完成协商与 CONNECT 应答后立即断开，用途同上。
+pub async fn socks5_proxy_drop_after_reply() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap().to_string();
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut s, _)) = listener.accept().await else {
+                return;
+            };
+            tokio::spawn(async move {
+                let mut head = [0u8; 2];
+                if s.read_exact(&mut head).await.is_err() {
+                    return;
+                }
+                let mut methods = vec![0u8; head[1] as usize];
+                if s.read_exact(&mut methods).await.is_err() {
+                    return;
+                }
+                s.write_all(&[0x05, 0x00]).await.ok();
+                let mut req = [0u8; 4];
+                if s.read_exact(&mut req).await.is_err() {
+                    return;
+                }
+                let skip = match req[3] {
+                    0x01 => 4,
+                    0x04 => 16,
+                    0x03 => {
+                        let mut l = [0u8; 1];
+                        if s.read_exact(&mut l).await.is_err() {
+                            return;
+                        }
+                        l[0] as usize
+                    }
+                    _ => return,
+                };
+                let mut rest = vec![0u8; skip + 2];
+                if s.read_exact(&mut rest).await.is_err() {
+                    return;
+                }
+                s.write_all(&[0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
+                    .await
+                    .ok();
+                // drop：同上，制造转发中途断连
+            });
+        }
+    });
+    addr
+}
+
 async fn read_until_head_end(s: &mut tokio::net::TcpStream) -> Option<String> {
     let mut buf = Vec::new();
     let mut tmp = [0u8; 512];

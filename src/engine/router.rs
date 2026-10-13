@@ -100,6 +100,22 @@ pub enum Route {
     Upstream(usize),
 }
 
+/// 守卫纯函数：上游侧连接失败是否应触发健康检查。
+/// 仅上游路由触发；直连与上游无关，正常关闭（failed = false）不触发。
+fn should_trigger(route: Route, failed: bool) -> bool {
+    failed && matches!(route, Route::Upstream(_))
+}
+
+/// 转发阶段上游侧连接失败 → 静默触发一轮健康检查。
+///
+/// 只启动探测，UP/DOWN 仍由主动探测的滞后阈值状态机判定（零误判状态风险）；
+/// 去抖由健康检查循环负责（同轮多次触发合并为一轮）。
+pub fn note_upstream_failure(ctx: &Arc<EngineCtx>, route: Route, failed: bool) {
+    if should_trigger(route, failed) {
+        let _ = ctx.health_tx.send(());
+    }
+}
+
 /// 为目标 `host:port` 选择一条出站路径并建立连接。
 ///
 /// `proto` 是入站协议标签（CONNECT / GET / SOCKS5…），仅用于转发日志。
@@ -224,6 +240,29 @@ mod tests {
         let pri = [1, 2];
         let st = statuses(&[DOWN, DOWN]);
         assert_eq!(candidate_order(&pri, &st), vec![0, 1]);
+    }
+
+    #[test]
+    fn tunnel_failure_notifies_health_only_for_upstream_routes() {
+        let cfg = Config::default();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let ctx = Arc::new(EngineCtx {
+            cfg: Arc::new(cfg.clone()),
+            state: Arc::new(StateStore::new(&cfg)),
+            health_tx: tx,
+            kind_cache: Mutex::new(HashMap::new()),
+            url_warned: AtomicBool::new(false),
+        });
+
+        // 直连失败：与上游无关，不触发
+        note_upstream_failure(&ctx, Route::Direct, true);
+        assert!(rx.try_recv().is_err());
+        // 上游正常关闭（failed = false）：不触发
+        note_upstream_failure(&ctx, Route::Upstream(0), false);
+        assert!(rx.try_recv().is_err());
+        // 上游侧失败：触发一轮健康检查
+        note_upstream_failure(&ctx, Route::Upstream(0), true);
+        assert!(rx.try_recv().is_ok());
     }
 
     #[test]

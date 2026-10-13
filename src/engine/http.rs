@@ -124,10 +124,14 @@ async fn handle_connect(
                 return;
             }
             // 客户端可能把首段数据（如 TLS ClientHello）和 CONNECT 头一起发出
-            if !leftover.is_empty() && up.write_all(&leftover).await.is_err() {
-                return;
+            if !leftover.is_empty() {
+                if up.write_all(&leftover).await.is_err() {
+                    router::note_upstream_failure(&ctx, route, true);
+                    return;
+                }
             }
-            let _ = tokio::io::copy_bidirectional(&mut stream, &mut up).await;
+            let res = tokio::io::copy_bidirectional(&mut stream, &mut up).await;
+            router::note_upstream_failure(&ctx, route, res.is_err());
         }
         Err(e) => {
             ctx.log(LogLevel::Warn, format!("CONNECT {host}:{port} 失败: {e}"));
@@ -167,9 +171,11 @@ async fn handle_plain(mut stream: TcpStream, ctx: Arc<EngineCtx>, req: Request, 
             let mut payload = new_head.into_bytes();
             payload.extend_from_slice(&leftover);
             if up.write_all(&payload).await.is_err() {
+                router::note_upstream_failure(&ctx, route, true);
                 return;
             }
-            let _ = tokio::io::copy_bidirectional(&mut stream, &mut up).await;
+            let res = tokio::io::copy_bidirectional(&mut stream, &mut up).await;
+            router::note_upstream_failure(&ctx, route, res.is_err());
         }
         Err(e) => {
             ctx.log(
@@ -266,8 +272,109 @@ fn build_origin_head(
 mod tests {
     use super::*;
 
+    use crate::config::{Config, UpstreamConfig, UpstreamKind};
+    use crate::engine::state::StateStore;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    use std::sync::atomic::AtomicBool;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
     fn request(head: &str) -> Request {
         parse_request(head.as_bytes()).unwrap()
+    }
+
+    /// 构造仅含一个指定 mock 上游的引擎上下文，返回 (ctx, 健康触发接收端)。
+    fn ctx_with_mock(addr: String) -> (Arc<EngineCtx>, tokio::sync::mpsc::UnboundedReceiver<()>) {
+        let mut cfg = Config::default();
+        cfg.upstreams = vec![UpstreamConfig {
+            name: "mock".into(),
+            addr,
+            kind: UpstreamKind::Http,
+            priority: 1,
+            username: None,
+            password: None,
+        }];
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let ctx = Arc::new(EngineCtx {
+            cfg: Arc::new(cfg.clone()),
+            state: Arc::new(StateStore::new(&cfg)),
+            health_tx: tx,
+            kind_cache: Mutex::new(HashMap::new()),
+            url_warned: AtomicBool::new(false),
+        });
+        (ctx, rx)
+    }
+
+    /// 与 mock 上游建立 CONNECT 隧道，返回 (客户端流, 转发任务)。
+    async fn tunnel_via_mock(ctx: Arc<EngineCtx>) -> (TcpStream, tokio::task::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut client = TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (server, _) = listener.accept().await.unwrap();
+        let req = request("CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n");
+        let task = tokio::spawn(handle_connect(server, ctx, req, Vec::new()));
+        // 等隧道建立应答，确保 copy_bidirectional 已启动
+        let mut buf = vec![0u8; 256];
+        let _ = client.read(&mut buf).await;
+        (client, task)
+    }
+
+    #[tokio::test]
+    async fn upstream_tunnel_failure_triggers_health_round() {
+        let mock = upstream::mock::http_proxy_drop_after_reply().await;
+        let (ctx, mut rx) = ctx_with_mock(mock);
+        let (mut client, task) = tunnel_via_mock(ctx).await;
+
+        // 隧道内写两段数据：mock 已 drop，第一段可能进缓冲成功，第二段写入时
+        // RST 已置位 → copy_bidirectional 必以 Err 结束 → 应触发健康检查
+        client.write_all(b"hello-1").await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+        let _ = client.write_all(b"hello-2").await;
+        let triggered = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv()).await;
+        assert!(
+            matches!(triggered, Ok(Some(()))),
+            "上游隧道失败应触发一轮健康检查"
+        );
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn direct_tunnel_failure_does_not_trigger_health_round() {
+        // 直连目标：accept 后立即 drop（无上游参与）
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let target = listener.local_addr().unwrap().to_string();
+        let mut cfg = Config::default();
+        cfg.upstreams.clear();
+        cfg.general.bypass_hosts = vec![target.clone()];
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let ctx = Arc::new(EngineCtx {
+            cfg: Arc::new(cfg.clone()),
+            state: Arc::new(StateStore::new(&cfg)),
+            health_tx: tx,
+            kind_cache: Mutex::new(HashMap::new()),
+            url_warned: AtomicBool::new(false),
+        });
+
+        let client = TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (mut server, _) = listener.accept().await.unwrap();
+        let req = request(format!("CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n\r\n").as_str());
+        let task = tokio::spawn(handle_connect(server, ctx, req, Vec::new()));
+        // 等客户端到目标的直连在引擎侧完成（copy 已启动）
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // 目标与客户端相继断开：copy 出错但属直连，不应触发
+        drop(client);
+        let triggered =
+            tokio::time::timeout(std::time::Duration::from_millis(500), rx.recv()).await;
+        assert!(
+            !matches!(triggered, Ok(Some(()))),
+            "直连失败不应触发健康检查"
+        );
+        task.abort();
     }
 
     #[test]

@@ -103,7 +103,8 @@ pub async fn handle(mut stream: TcpStream, ctx: Arc<EngineCtx>) {
             let _ = stream
                 .write_all(&[0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
                 .await;
-            let _ = tokio::io::copy_bidirectional(&mut stream, &mut up).await;
+            let res = tokio::io::copy_bidirectional(&mut stream, &mut up).await;
+            router::note_upstream_failure(&ctx, route, res.is_err());
         }
         Err(e) => {
             ctx.log(LogLevel::Warn, format!("SOCKS5 {host}:{port} 失败: {e}"));
