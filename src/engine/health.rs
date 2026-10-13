@@ -198,6 +198,15 @@ async fn check_one(ctx: Arc<EngineCtx>, idx: usize, manual: bool) {
     ctx.state.record_check(idx, outcome.is_ok());
     let ms = started.elapsed().as_millis() as u64;
     let now = super::state::now_string();
+    // 时间线样本：at 取探测发起时刻，供统计页按 10s 窗口分桶展示
+    ctx.state.record_timeline(
+        idx,
+        super::state::CheckSample {
+            at: started,
+            stamp: now.clone(),
+            latency_ms: if outcome.is_ok() { Some(ms) } else { None },
+        },
+    );
     let thr_ok = ctx.cfg.health.success_threshold.max(1);
     let thr_fail = ctx.cfg.health.fail_threshold.max(1);
 

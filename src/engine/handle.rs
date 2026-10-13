@@ -45,6 +45,11 @@ impl EngineHandle {
         self.state.snapshot()
     }
 
+    /// 健康检查时间线快照：每上游 120 个 10s 格（最近 20 分钟）。
+    pub fn timeline_snapshot(&self) -> Vec<Vec<super::state::TimelineCell>> {
+        self.state.timeline_snapshot()
+    }
+
     pub fn clear_logs(&self) {
         self.state.clear_logs();
     }

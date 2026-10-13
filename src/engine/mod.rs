@@ -23,4 +23,7 @@ mod upstream;
 mod url;
 
 pub use handle::EngineHandle;
-pub use state::{HealthStatus, LogEntry, LogLevel, Phase, Snapshot, UpstreamState};
+pub use state::{
+    CellKind, CheckSample, HealthStatus, LogEntry, LogLevel, Phase, Snapshot, TimelineCell,
+    UpstreamState,
+};

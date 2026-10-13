@@ -1,9 +1,10 @@
 //! 引擎与 GUI 之间共享的状态：快照、日志、上游运行信息与引擎上下文。
 //! 日志落盘见 [`super::filelog`]。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc;
 
@@ -13,6 +14,42 @@ use super::filelog::FileLogger;
 use super::upstream::ResolvedKind;
 
 const LOG_CAP: usize = 200;
+
+/// 健康时间线窗口：最近 20 分钟，10s 一格共 120 格，样本上限 240。
+pub const TIMELINE_WINDOW_SECS: u64 = 20 * 60;
+pub const TIMELINE_BUCKETS: usize = 120;
+pub const TIMELINE_BUCKET_SECS: u64 = 10;
+pub const TIMELINE_CAP: usize = 240;
+
+/// 一次健康检查结果的时间线样本（引擎本次启动内有效，重启清零）。
+#[derive(Debug, Clone)]
+pub struct CheckSample {
+    /// 探测发起时刻（单调钟，用于分桶与淘汰）
+    pub at: Instant,
+    /// 墙钟时刻（悬停展示）
+    pub stamp: String,
+    /// Some = 成功延迟；None = 失败
+    pub latency_ms: Option<u64>,
+}
+
+/// 时间线单格聚合结果：10s 窗口内该上游的全部探测样本。
+#[derive(Debug, Clone)]
+pub struct TimelineCell {
+    pub kind: CellKind,
+    pub samples: Vec<CheckSample>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CellKind {
+    /// 窗口内无样本
+    Empty,
+    /// 全部成功
+    AllOk,
+    /// 全部失败
+    AllFail,
+    /// 成败混合
+    Mixed,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LogLevel {
@@ -144,6 +181,8 @@ pub struct StateStore {
     stats: Vec<UpstreamStats>,
     /// 每个上游「进行中的手动测试」计数（并发测试可重叠，归零才算结束）
     testing: Vec<AtomicUsize>,
+    /// 每上游健康检查时间线样本（独立于快照，避免 Snapshot 克隆放大）
+    timeline: Mutex<Vec<VecDeque<CheckSample>>>,
     /// 日志文件写入器；独立锁，文件 IO 不与快照锁互相放大竞争
     file: Mutex<FileLogger>,
 }
@@ -180,6 +219,12 @@ impl StateStore {
             .map(|_| UpstreamStats::default())
             .collect();
         let testing = cfg.upstreams.iter().map(|_| AtomicUsize::new(0)).collect();
+        let timeline = Mutex::new(
+            cfg.upstreams
+                .iter()
+                .map(|_| VecDeque::with_capacity(TIMELINE_CAP))
+                .collect(),
+        );
         StateStore {
             snap: Mutex::new(Snapshot {
                 phase: Phase::Stopped,
@@ -191,6 +236,7 @@ impl StateStore {
             }),
             stats,
             testing,
+            timeline,
             // 测试构建不落盘：cargo test 会构造 StateStore，避免污染用户真实日志
             file: Mutex::new(FileLogger::open(if cfg!(test) {
                 None
@@ -234,6 +280,47 @@ impl StateStore {
                 s.checks_failed.fetch_add(1, Ordering::Relaxed);
             }
         }
+    }
+
+    /// 追加一次健康检查结果到时间线，并淘汰 20 分钟窗口外与超容量的旧样本。
+    pub fn record_timeline(&self, idx: usize, sample: CheckSample) {
+        let mut tl = self.timeline.lock().unwrap();
+        let Some(q) = tl.get_mut(idx) else {
+            return;
+        };
+        q.push_back(sample);
+        let cutoff = Instant::now() - Duration::from_secs(TIMELINE_WINDOW_SECS);
+        while q.front().is_some_and(|s| s.at < cutoff) {
+            q.pop_front();
+        }
+        while q.len() > TIMELINE_CAP {
+            q.pop_front();
+        }
+    }
+
+    /// 聚合时间线快照：每上游 [`TIMELINE_BUCKETS`] 个 10s 格（末格最新，渲染最新在右）。
+    pub fn timeline_snapshot(&self) -> Vec<Vec<TimelineCell>> {
+        let now = Instant::now();
+        let tl = self.timeline.lock().unwrap();
+        tl.iter()
+            .map(|q| {
+                let mut buckets: Vec<Vec<CheckSample>> = vec![Vec::new(); TIMELINE_BUCKETS];
+                for s in q {
+                    let age = now.duration_since(s.at).as_secs();
+                    if age < TIMELINE_WINDOW_SECS {
+                        let k = TIMELINE_BUCKETS - 1 - (age / TIMELINE_BUCKET_SECS) as usize;
+                        buckets[k].push(s.clone());
+                    }
+                }
+                buckets
+                    .into_iter()
+                    .map(|samples| TimelineCell {
+                        kind: bucket_kind(&samples),
+                        samples,
+                    })
+                    .collect()
+            })
+            .collect()
     }
 
     /// 清零本次会话的统计：累计流量/连接数、速率与峰值、健康检查计数。
@@ -364,6 +451,19 @@ pub fn now_string() -> String {
     chrono::Local::now().format("%H:%M:%S").to_string()
 }
 
+/// 按窗口内样本的成功情况归类格子：全成功 / 全失败 / 混合 / 空。
+fn bucket_kind(samples: &[CheckSample]) -> CellKind {
+    if samples.is_empty() {
+        CellKind::Empty
+    } else if samples.iter().all(|s| s.latency_ms.is_some()) {
+        CellKind::AllOk
+    } else if samples.iter().all(|s| s.latency_ms.is_none()) {
+        CellKind::AllFail
+    } else {
+        CellKind::Mixed
+    }
+}
+
 /// 引擎异步任务共享的上下文：配置、状态存储、健康检查唤醒通道与探测缓存。
 pub struct EngineCtx {
     pub cfg: Arc<Config>,
@@ -398,6 +498,9 @@ impl EngineCtx {
 mod tests {
     use super::StateStore;
     use crate::config::Config;
+    use std::collections::VecDeque;
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
 
     #[test]
     fn manual_testing_flag_survives_overlapping_tests() {
@@ -413,5 +516,73 @@ mod tests {
         store.end_testing(0);
         store.end_testing(0); // 多余的 end 不应下溢出负数
         assert!(!store.snapshot().upstreams[0].testing);
+    }
+
+    mod timeline {
+        use super::*;
+        use crate::engine::state::{CellKind, CheckSample};
+
+        fn sample(age_secs: u64, ok: bool) -> CheckSample {
+            CheckSample {
+                at: Instant::now() - Duration::from_secs(age_secs),
+                stamp: "12:00:00".into(),
+                latency_ms: if ok { Some(100) } else { None },
+            }
+        }
+
+        /// 桶索引：age 越小越新，最新桶在末尾（渲染时最新在右）。
+        fn bucket(age_secs: u64) -> usize {
+            120 - 1 - (age_secs / 10) as usize
+        }
+
+        #[test]
+        fn drops_samples_older_than_20_minute_window() {
+            let store = StateStore::new(&Config::default());
+            store.record_timeline(0, sample(25 * 60, true));
+            let snap = store.timeline_snapshot();
+            assert!(snap[0].iter().all(|c| c.kind == CellKind::Empty));
+        }
+
+        #[test]
+        fn buckets_by_10s_windows_and_classifies_kinds() {
+            let store = StateStore::new(&Config::default());
+            store.record_timeline(0, sample(5, true));
+            store.record_timeline(0, sample(12, true));
+            store.record_timeline(0, sample(18, false));
+            store.record_timeline(0, sample(45, false));
+            store.record_timeline(0, sample(48, false));
+
+            let snap = store.timeline_snapshot();
+            assert_eq!(snap[0][bucket(5)].kind, CellKind::AllOk);
+            assert_eq!(snap[0][bucket(12)].kind, CellKind::Mixed);
+            assert_eq!(snap[0][bucket(45)].kind, CellKind::AllFail);
+            assert_eq!(snap[0][bucket(90)].kind, CellKind::Empty);
+            // 混合格保留原始样本供悬停展示
+            assert_eq!(snap[0][bucket(12)].samples.len(), 2);
+        }
+
+        #[test]
+        fn caps_backlog_at_240_samples() {
+            let store = StateStore::new(&Config::default());
+            for _ in 0..241 {
+                store.record_timeline(0, sample(0, true));
+            }
+            let snap = store.timeline_snapshot();
+            let total: usize = snap[0].iter().map(|c| c.samples.len()).sum();
+            assert_eq!(total, 240);
+        }
+
+        #[test]
+        fn per_upstream_queues_are_independent() {
+            let store = StateStore::new(&Config::default());
+            store.record_timeline(0, sample(5, true));
+            let snap = store.timeline_snapshot();
+            assert_eq!(
+                snap[1].iter().filter(|c| c.kind != CellKind::Empty).count(),
+                0
+            );
+            let _ = VecDeque::<()>::new(); // VecDeque 由实现引入，此处防误删导入
+            let _ = &Mutex::new(());
+        }
     }
 }

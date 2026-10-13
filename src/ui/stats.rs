@@ -89,6 +89,33 @@ pub(crate) mod samples {
             4
         }
     }
+
+    /// 时间线格子悬停文本：每行一个样本，`时刻 ✓ 延迟` 或 `时刻 ✗`；空格返回 None。
+    pub(crate) fn hover_lines(samples: &[crate::engine::CheckSample]) -> Option<String> {
+        if samples.is_empty() {
+            return None;
+        }
+        Some(
+            samples
+                .iter()
+                .map(|s| match s.latency_ms {
+                    Some(ms) => format!("{} ✓ {ms} ms", s.stamp),
+                    None => format!("{} ✗", s.stamp),
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+    }
+}
+
+/// 时间线格子配色：绿=全成功、红=全失败、黄=成败混合、弱底色=无数据。
+fn cell_color(kind: &crate::engine::CellKind, p: &super::theme::Palette) -> egui::Color32 {
+    match kind {
+        crate::engine::CellKind::AllOk => super::theme::GREEN,
+        crate::engine::CellKind::AllFail => super::theme::RED,
+        crate::engine::CellKind::Mixed => super::theme::YELLOW,
+        crate::engine::CellKind::Empty => p.field,
+    }
 }
 
 impl App {
@@ -137,6 +164,7 @@ impl App {
         });
         ui.add_space(6.0);
         self.error_banner(ui);
+        let timeline = self.engine.timeline_snapshot();
 
         // ScrollArea 不吃 footer 的空间：预留下方 6px 间距 + 页脚预算高度（App::FOOTER_H）
         let scroll_h = Self::page_body_height(ui, 120.0);
@@ -151,7 +179,8 @@ impl App {
                 self.heatmap_card(ui, &p);
                 ui.add_space(8.0);
                 for i in 0..self.cfg.upstreams.len() {
-                    self.upstream_stats_card(ui, snap, i, &p);
+                    let cells = timeline.get(i).map(|v| v.as_slice()).unwrap_or(&[]);
+                    self.upstream_stats_card(ui, snap, i, cells, &p);
                     ui.add_space(8.0);
                 }
                 if self.cfg.upstreams.is_empty() {
@@ -209,6 +238,45 @@ impl App {
         });
     }
 
+    /// 健康检查时间线：120 格 × 10s（最近 20 分钟），最新在右。
+    ///
+    /// 绿=全成功、红=全失败、黄=成败混合、弱底色=无样本；悬停显示该格探测明细。
+    /// 格宽自适应可用宽度（下限 ~2px），与热力图同一套绘制手法。
+    fn health_timeline(
+        &mut self,
+        ui: &mut egui::Ui,
+        cells: &[crate::engine::TimelineCell],
+        p: &super::theme::Palette,
+    ) {
+        use samples::hover_lines;
+        let n = cells.len().max(1);
+        let gap = 1.0;
+        let cell = ((ui.available_width() - gap * (n as f32 - 1.0)) / n as f32).max(2.0);
+        let size = egui::vec2(n as f32 * (cell + gap) - gap, 12.0);
+        let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::hover());
+        let painter = ui.painter_at(rect);
+        // 悬停格索引（列定位与 heatmap 同款），循环后一次性设置悬浮文本
+        let hover = resp
+            .hover_pos()
+            .filter(|h| rect.contains(*h))
+            .map(|h| ((h.x - rect.left()) / (cell + gap)) as usize);
+        for (k, c) in cells.iter().enumerate() {
+            let min = egui::pos2(rect.left() + k as f32 * (cell + gap), rect.top());
+            painter.rect_filled(
+                egui::Rect::from_min_size(min, egui::vec2(cell, 12.0)),
+                1.0,
+                cell_color(&c.kind, p),
+            );
+        }
+        if let Some(k) = hover {
+            if let Some(c) = cells.get(k) {
+                if let Some(text) = hover_lines(&c.samples) {
+                    resp.on_hover_text(text);
+                }
+            }
+        }
+    }
+
     /// GitHub 风格热力图：60 格/行 × 15 行，悬停显示时刻与速率。
     ///
     /// 格子宽度自适应可用宽度（下限 ~3px；更窄的窗口接受裁剪，不引入滚动）。
@@ -256,12 +324,13 @@ impl App {
         }
     }
 
-    /// 单上游统计卡：健康（状态/延迟/检查计数）、累计流量、速率与峰值。
+    /// 单上游统计卡：健康（状态/延迟/检查计数/时间线）、累计流量、速率与峰值。
     fn upstream_stats_card(
         &mut self,
         ui: &mut egui::Ui,
         snap: &Snapshot,
         i: usize,
+        cells: &[crate::engine::TimelineCell],
         p: &super::theme::Palette,
     ) {
         let st = snap.upstreams.get(i);
@@ -342,6 +411,19 @@ impl App {
                     .color(p.weak),
                 );
                 ui.add_space(2.0);
+                // 健康时间线：最近 20 分钟逐格探测结果
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("健康").size(SZ_SMALL).color(p.weak));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(
+                            egui::RichText::new("最近 20 分钟 · 每格 10 秒")
+                                .size(SZ_TINY)
+                                .color(p.weak),
+                        );
+                    });
+                });
+                self.health_timeline(ui, cells, p);
+                ui.add_space(2.0);
                 // 健康尾行
                 let mut health = match &u.last_check {
                     Some(t) => format!("上次检查 {t}"),
@@ -409,6 +491,43 @@ mod tests {
     use super::samples::{SAMPLE_CAP, Sample, heat_level, push_sample};
     use std::collections::VecDeque;
     use std::time::{Duration, Instant};
+
+    mod timeline_ui {
+        use crate::engine::{CellKind, CheckSample, TimelineCell};
+        use crate::ui::stats::{cell_color, samples::hover_lines};
+        use crate::ui::theme::{GREEN, RED, YELLOW, palette};
+        use std::time::Instant;
+
+        fn s(stamp: &str, ms: Option<u64>) -> CheckSample {
+            CheckSample {
+                at: Instant::now(),
+                stamp: stamp.into(),
+                latency_ms: ms,
+            }
+        }
+
+        #[test]
+        fn hover_lines_format_samples_or_none() {
+            assert_eq!(hover_lines(&[]), None);
+            let cell = TimelineCell {
+                kind: CellKind::Mixed,
+                samples: vec![s("12:00:01", Some(311)), s("12:00:05", None)],
+            };
+            assert_eq!(
+                hover_lines(&cell.samples).unwrap(),
+                "12:00:01 ✓ 311 ms\n12:00:05 ✗"
+            );
+        }
+
+        #[test]
+        fn cell_colors_follow_kind() {
+            let p = palette(true);
+            assert_eq!(cell_color(&CellKind::AllOk, &p), GREEN);
+            assert_eq!(cell_color(&CellKind::AllFail, &p), RED);
+            assert_eq!(cell_color(&CellKind::Mixed, &p), YELLOW);
+            assert_eq!(cell_color(&CellKind::Empty, &p), p.field);
+        }
+    }
 
     fn base() -> (VecDeque<Sample>, Option<Instant>, (u64, u64)) {
         (VecDeque::new(), None, (0, 0))
