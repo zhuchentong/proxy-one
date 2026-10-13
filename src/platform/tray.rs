@@ -32,6 +32,32 @@ pub enum TrayMsg {
 const GREEN: [u8; 3] = [0x3f, 0xc1, 0x7a];
 const GRAY: [u8; 3] = [0x8a, 0x8a, 0x8a];
 const RED: [u8; 3] = [0xe0, 0x60, 0x5d];
+/// 运行中但存在故障上游（健康降级）
+const ORANGE: [u8; 3] = [0xd8, 0xa0, 0x3a];
+
+/// 托盘图标形态：绿=运行且全部健康、黄=运行但有上游故障、红=绑定失败、灰=停止。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IconKind {
+    Running,
+    Degraded,
+    Error,
+    Stopped,
+}
+
+/// 图标形态纯函数：生命周期决定基本档位，运行档再按上游健康细分降级色。
+fn pick_icon_kind(phase: Phase, has_down: bool) -> IconKind {
+    match phase {
+        Phase::Running | Phase::Starting => {
+            if has_down {
+                IconKind::Degraded
+            } else {
+                IconKind::Running
+            }
+        }
+        Phase::BindFailed => IconKind::Error,
+        Phase::Stopping | Phase::Stopped => IconKind::Stopped,
+    }
+}
 
 /// 生成 32×32 的实心圆点 RGBA（边缘半速抗锯齿），托盘与窗口图标共用。
 fn circle_rgba(rgb: [u8; 3]) -> Vec<u8> {
@@ -135,6 +161,7 @@ pub struct TrayHandle {
     msg_rx: Receiver<TrayMsg>,
     tray: TrayIcon,
     icon_running: Icon,
+    icon_degraded: Icon,
     icon_stopped: Icon,
     icon_error: Icon,
     engine_item: CheckMenuItem,
@@ -152,6 +179,7 @@ impl TrayHandle {
     /// 左键 activate → [`TrayIconEvent`]，右键菜单由托盘宿主渲染。
     pub fn new(ctx: egui::Context) -> Result<Self> {
         let icon_running = circle_icon(GREEN)?;
+        let icon_degraded = circle_icon(ORANGE)?;
         let icon_stopped = circle_icon(GRAY)?;
         let icon_error = circle_icon(RED)?;
 
@@ -240,6 +268,7 @@ impl TrayHandle {
             msg_rx: rx,
             tray,
             icon_running,
+            icon_degraded,
             icon_stopped,
             icon_error,
             engine_item,
@@ -269,10 +298,16 @@ impl TrayHandle {
     /// （窗口隐藏时依然执行，保证托盘信息不滞后）。
     pub fn sync_snapshot(&mut self, snap: &Snapshot) {
         let running = matches!(snap.phase, Phase::Running | Phase::Starting);
-        let icon = match snap.phase {
-            Phase::Running | Phase::Starting => &self.icon_running,
-            Phase::BindFailed => &self.icon_error,
-            Phase::Stopping | Phase::Stopped => &self.icon_stopped,
+        let has_down = snap
+            .upstreams
+            .iter()
+            .any(|u| u.status == HealthStatus::Down);
+        let kind = pick_icon_kind(snap.phase, has_down);
+        let icon = match kind {
+            IconKind::Running => &self.icon_running,
+            IconKind::Degraded => &self.icon_degraded,
+            IconKind::Error => &self.icon_error,
+            IconKind::Stopped => &self.icon_stopped,
         };
         let tip = status_line(snap);
         if self.last_tip.as_deref() != Some(&tip) {
@@ -368,6 +403,16 @@ mod tests {
         // 中心不透明，四角透明
         assert_eq!(rgba[16 * 32 * 4 + 16 * 4 + 3], 255);
         assert_eq!(rgba[3], 0);
+    }
+
+    #[test]
+    fn icon_kind_reflects_phase_and_upstream_health() {
+        assert_eq!(pick_icon_kind(Phase::Running, false), IconKind::Running);
+        assert_eq!(pick_icon_kind(Phase::Running, true), IconKind::Degraded);
+        assert_eq!(pick_icon_kind(Phase::Starting, true), IconKind::Degraded);
+        assert_eq!(pick_icon_kind(Phase::BindFailed, false), IconKind::Error);
+        assert_eq!(pick_icon_kind(Phase::Stopped, false), IconKind::Stopped);
+        assert_eq!(pick_icon_kind(Phase::Stopping, true), IconKind::Stopped);
     }
 
     #[test]
