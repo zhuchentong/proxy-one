@@ -248,7 +248,9 @@ async fn check_one(ctx: Arc<EngineCtx>, idx: usize, manual: bool) {
                 match failure_log_level(t, prev, fail_streak) {
                     Some(LogLevel::Error) => ctx.log(
                         LogLevel::Error,
-                        format!("⛔ 上游 [{name}] 健康检查连续失败 {thr_fail} 次 → DOWN（{reason}）"),
+                        format!(
+                            "⛔ 上游 [{name}] 健康检查连续失败 {thr_fail} 次 → DOWN（{reason}）"
+                        ),
                     ),
                     // 手动测试已有 🔍 结果日志，Warn 抑制（既有行为）
                     Some(LogLevel::Warn) if !manual => ctx.log(
