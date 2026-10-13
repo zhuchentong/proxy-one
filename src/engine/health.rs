@@ -120,14 +120,23 @@ pub(crate) fn transition(
 /// - 转 DOWN → [`LogLevel::Error`]（手动测试也保留，与既有行为一致）；
 /// - UP 下连续失败第 1 次 → [`LogLevel::Warn`]：每个失败段开头提示一次。
 ///   注：`fail_threshold = 1` 时首次失败即转 DOWN，本分支不可达，属预期；
-/// - DOWN 后的重复失败 → `None` 静默：避免刷屏（既定取舍，
-///   如需长 DOWN 期间的心跳提醒可另行叠加降频日志）；
+/// - DOWN 后的重复失败 → 心跳节流：每逢 `fail_streak` 是 `warn_every` 的
+///   整数倍打一条 [`LogLevel::Warn`]（调用方按检查间隔折算，约每分钟一条），
+///   其余静默：既保留长 DOWN 的可见性，又不刷屏；
 /// - [`HealthStatus::Unknown`]（启动后尚未成功过）期间首败 → `None` 静默：
 ///   启动即执行一轮检查，距 ERR DOWN 至多一轮，静默无害。
-fn failure_log_level(t: Transition, prev: HealthStatus, fail_streak: u32) -> Option<LogLevel> {
+fn failure_log_level(
+    t: Transition,
+    prev: HealthStatus,
+    fail_streak: u32,
+    warn_every: u32,
+) -> Option<LogLevel> {
     match (t, prev, fail_streak) {
         (Transition::ToDown, _, _) => Some(LogLevel::Error),
         (Transition::None, HealthStatus::Up, 1) => Some(LogLevel::Warn),
+        (Transition::None, HealthStatus::Down, n) => {
+            (n > 0 && n % warn_every.max(1) == 0).then_some(LogLevel::Warn)
+        }
         _ => None,
     }
 }
@@ -192,8 +201,8 @@ async fn check_one(ctx: Arc<EngineCtx>, idx: usize, manual: bool) {
     let thr_ok = ctx.cfg.health.success_threshold.max(1);
     let thr_fail = ctx.cfg.health.fail_threshold.max(1);
 
-    // 手动测试总会给出一条结果日志；周期性检查仅在 UP 下首次失败（Warn 一次）
-    // 与转 DOWN（Err）时说话，DOWN 后的重复失败静默，避免刷屏
+    // 手动测试总会给出一条结果日志；周期性检查仅在 UP 下首次失败（Warn 一次）、
+    // 转 DOWN（Err）与 DOWN 心跳（Warn，约每分钟一条）时说话，其余失败静默避免刷屏
     if manual {
         match &outcome {
             Ok(()) => ctx.log(
@@ -245,7 +254,10 @@ async fn check_one(ctx: Arc<EngineCtx>, idx: usize, manual: bool) {
                 (t, prev, u.fail_streak)
             });
             if let Some((t, prev, fail_streak)) = state_change {
-                match failure_log_level(t, prev, fail_streak) {
+                // DOWN 心跳节流：按检查间隔折算出「约每 60s 一条」的失败次数
+                let warn_every =
+                    (60 / ctx.cfg.health.interval_secs.max(1)).max(1) as u32;
+                match failure_log_level(t, prev, fail_streak, warn_every) {
                     Some(LogLevel::Error) => ctx.log(
                         LogLevel::Error,
                         format!(
@@ -253,10 +265,21 @@ async fn check_one(ctx: Arc<EngineCtx>, idx: usize, manual: bool) {
                         ),
                     ),
                     // 手动测试已有 🔍 结果日志，Warn 抑制（既有行为）
-                    Some(LogLevel::Warn) if !manual => ctx.log(
-                        LogLevel::Warn,
-                        format!("上游 [{name}] 健康检查失败（{reason}）"),
-                    ),
+                    Some(LogLevel::Warn) if !manual => {
+                        if prev == HealthStatus::Down {
+                            ctx.log(
+                                LogLevel::Warn,
+                                format!(
+                                    "上游 [{name}] 健康检查持续失败：已连续 {fail_streak} 次（{reason}）"
+                                ),
+                            );
+                        } else {
+                            ctx.log(
+                                LogLevel::Warn,
+                                format!("上游 [{name}] 健康检查失败（{reason}）"),
+                            );
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -337,25 +360,61 @@ mod tests {
 
     #[test]
     fn failure_log_policy() {
+        const EVERY: u32 = 7;
         // 转 DOWN → Error（手动/周期一致）
         assert_eq!(
-            failure_log_level(Transition::ToDown, HealthStatus::Up, 2),
+            failure_log_level(Transition::ToDown, HealthStatus::Up, 2, EVERY),
             Some(LogLevel::Error)
         );
         // UP 下首败 → Warn
         assert_eq!(
-            failure_log_level(Transition::None, HealthStatus::Up, 1),
+            failure_log_level(Transition::None, HealthStatus::Up, 1, EVERY),
             Some(LogLevel::Warn)
         );
-        // DOWN 后重复失败 → 静默
+        // DOWN 后非心跳轮次的重复失败 → 静默
         assert_eq!(
-            failure_log_level(Transition::None, HealthStatus::Down, 1),
+            failure_log_level(Transition::None, HealthStatus::Down, 1, EVERY),
+            None
+        );
+        assert_eq!(
+            failure_log_level(Transition::None, HealthStatus::Down, 8, EVERY),
             None
         );
         // Unknown（启动未成功过）期间首败 → 静默
         assert_eq!(
-            failure_log_level(Transition::None, HealthStatus::Unknown, 1),
+            failure_log_level(Transition::None, HealthStatus::Unknown, 1, EVERY),
             None
+        );
+    }
+
+    #[test]
+    fn down_heartbeat_warns_on_multiples_of_warn_every() {
+        const EVERY: u32 = 7;
+        // DOWN 心跳：每逢 warn_every 整数倍打一条摘要 Warn
+        assert_eq!(
+            failure_log_level(Transition::None, HealthStatus::Down, 7, EVERY),
+            Some(LogLevel::Warn)
+        );
+        assert_eq!(
+            failure_log_level(Transition::None, HealthStatus::Down, 14, EVERY),
+            Some(LogLevel::Warn)
+        );
+        assert_eq!(
+            failure_log_level(Transition::None, HealthStatus::Down, 13, EVERY),
+            None
+        );
+    }
+
+    #[test]
+    fn warn_every_zero_falls_back_to_one() {
+        // warn_every=0（异常配置）按 1 处理：每次失败都提示，不 panic
+        assert_eq!(
+            failure_log_level(Transition::None, HealthStatus::Down, 1, 0),
+            Some(LogLevel::Warn)
+        );
+        assert_eq!(
+            failure_log_level(Transition::None, HealthStatus::Down, 2, 0),
+            Some(LogLevel::Warn)
         );
     }
 }
