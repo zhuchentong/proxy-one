@@ -214,3 +214,22 @@ pub(crate) fn log_line(ui: &mut egui::Ui, e: &LogEntry) {
         .selectable(true),
     );
 }
+
+/// 自绘圆角细进度条（高 6px、圆角 3）：`frac ∈ [0,1]`，超出按满格处理。
+///
+/// 语义提示：满量程常取「上/下行峰值之和」，两个峰值未必同时发生，
+/// 该和值 ≥ 任意真实瞬间总速率，进度条达不到满格属预期（偏保守）。
+pub(crate) fn rate_bar(ui: &mut egui::Ui, frac: f32, fg: egui::Color32, bg: egui::Color32) {
+    let height = 6.0;
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), height),
+        egui::Sense::hover(),
+    );
+    ui.painter().rect_filled(rect, 3.0, bg);
+    let frac = frac.clamp(0.0, 1.0);
+    if frac > 0.0 {
+        let mut fill = rect;
+        fill.set_width(rect.width() * frac);
+        ui.painter().rect_filled(fill, 3.0, fg);
+    }
+}

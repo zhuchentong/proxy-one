@@ -46,6 +46,12 @@ pub struct App {
     pub(crate) log_levels: logs::LevelFilter,
     /// 独立统计页：健康状态、流量与峰值的按上游汇总
     pub(crate) show_stats: bool,
+    /// 统计页：全局每秒总速率样本（↑+↓ 字节/秒），容量 900 ≈ 最近 15 分钟
+    pub(crate) rate_history: std::collections::VecDeque<stats::samples::Sample>,
+    /// 采样节流：上次入样时刻
+    pub(crate) last_sample: Option<std::time::Instant>,
+    /// 采样回落检测基准：上次入样时的累计计数（回落即引擎重启/清零）
+    pub(crate) last_totals: (u64, u64),
     pub(crate) dirty: bool,
     pub(crate) msg: Option<(String, egui::Color32)>,
     /// 消息过期时刻：超过后自动从状态卡消失
@@ -93,6 +99,9 @@ impl App {
             log_search: String::new(),
             log_levels: logs::LevelFilter::default(),
             show_stats: false,
+            rate_history: std::collections::VecDeque::new(),
+            last_sample: None,
+            last_totals: (0, 0),
             dirty: false,
             msg: None,
             msg_until: None,
@@ -309,6 +318,8 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         let snap = self.engine.snapshot();
+        // 每帧采样与页面开关无关：保证统计页热力图始终是真正的「最近 15 分钟」
+        self.sample_rates(&snap);
 
         egui::CentralPanel::default()
             .frame(

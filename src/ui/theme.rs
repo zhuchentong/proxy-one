@@ -16,6 +16,8 @@ pub(crate) const SZ_SECTION: f32 = 12.5;
 pub(crate) const SZ_BODY: f32 = 11.5;
 pub(crate) const SZ_SMALL: f32 = 11.0;
 pub(crate) const SZ_TINY: f32 = 10.5;
+/// 统计页大数字专用档。
+pub(crate) const SZ_NUM: f32 = 18.0;
 
 /// 控件统一圆角，与按钮（8）、图标钮（6）形成层级。
 pub(crate) const RADIUS_CTRL: u8 = 6;
@@ -54,6 +56,30 @@ pub(crate) fn palette(dark: bool) -> Palette {
             hover: egui::Color32::from_rgb(0xec, 0xef, 0xf3),
             chip: egui::Color32::from_rgb(0xdf, 0xf3, 0xe8),
         }
+    }
+}
+
+/// 热力图 5 档蓝色阶：`[底格, L1, L2, L3, L4]`。
+///
+/// 历史格颜色以当前参考峰值每帧重算：峰值创新高时整图颜色平滑重缩放，
+/// 不做入样时定格。
+pub(crate) fn heat_scale(dark: bool) -> [egui::Color32; 5] {
+    if dark {
+        [
+            egui::Color32::from_rgb(0x23, 0x26, 0x2c),
+            egui::Color32::from_rgb(0x1e, 0x3a, 0x5f),
+            egui::Color32::from_rgb(0x2f, 0x6b, 0xab),
+            egui::Color32::from_rgb(0x4a, 0x9c, 0xe8),
+            egui::Color32::from_rgb(0x7c, 0xc4, 0xff),
+        ]
+    } else {
+        [
+            egui::Color32::from_rgb(0xee, 0xf0, 0xf3),
+            egui::Color32::from_rgb(0xcf, 0xe3, 0xf7),
+            egui::Color32::from_rgb(0x9c, 0xc7, 0xef),
+            egui::Color32::from_rgb(0x5d, 0xa4, 0xe4),
+            egui::Color32::from_rgb(0x2f, 0x7f, 0xd1),
+        ]
     }
 }
 
