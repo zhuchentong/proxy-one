@@ -124,11 +124,9 @@ async fn handle_connect(
                 return;
             }
             // 客户端可能把首段数据（如 TLS ClientHello）和 CONNECT 头一起发出
-            if !leftover.is_empty() {
-                if up.write_all(&leftover).await.is_err() {
-                    router::note_upstream_failure(&ctx, route, true);
-                    return;
-                }
+            if !leftover.is_empty() && up.write_all(&leftover).await.is_err() {
+                router::note_upstream_failure(&ctx, route, true);
+                return;
             }
             let res = tokio::io::copy_bidirectional(&mut stream, &mut up).await;
             router::note_upstream_failure(&ctx, route, res.is_err());
@@ -286,15 +284,17 @@ mod tests {
 
     /// 构造仅含一个指定 mock 上游的引擎上下文，返回 (ctx, 健康触发接收端)。
     fn ctx_with_mock(addr: String) -> (Arc<EngineCtx>, tokio::sync::mpsc::UnboundedReceiver<()>) {
-        let mut cfg = Config::default();
-        cfg.upstreams = vec![UpstreamConfig {
-            name: "mock".into(),
-            addr,
-            kind: UpstreamKind::Http,
-            priority: 1,
-            username: None,
-            password: None,
-        }];
+        let cfg = Config {
+            upstreams: vec![UpstreamConfig {
+                name: "mock".into(),
+                addr,
+                kind: UpstreamKind::Http,
+                priority: 1,
+                username: None,
+                password: None,
+            }],
+            ..Config::default()
+        };
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let ctx = Arc::new(EngineCtx {
             cfg: Arc::new(cfg.clone()),
@@ -360,7 +360,7 @@ mod tests {
         let client = TcpStream::connect(listener.local_addr().unwrap())
             .await
             .unwrap();
-        let (mut server, _) = listener.accept().await.unwrap();
+        let (server, _) = listener.accept().await.unwrap();
         let req = request(format!("CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n\r\n").as_str());
         let task = tokio::spawn(handle_connect(server, ctx, req, Vec::new()));
         // 等客户端到目标的直连在引擎侧完成（copy 已启动）

@@ -9,7 +9,7 @@ use eframe::egui;
 use super::App;
 use super::theme::{GREEN, SZ_NUM, SZ_SECTION, SZ_SMALL, SZ_TINY, SZ_TITLE, palette};
 use super::widgets::{
-    ButtonVariant, card, chip, icon_button, latency_color, phase_indicator, rate_bar, status_glyph,
+    ButtonVariant, card, chip, latency_color, phase_indicator, rate_bar, status_glyph,
     styled_button_ex,
 };
 use crate::engine::{HealthStatus, Snapshot};
@@ -136,13 +136,10 @@ impl App {
     pub(crate) fn stats_view(&mut self, ui: &mut egui::Ui, snap: &Snapshot) {
         let p = palette(self.dark);
         if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-            self.show_stats = false;
+            self.page = super::Page::Main;
         }
 
         ui.horizontal(|ui| {
-            if icon_button(ui, "←", "返回主界面 (Esc)", self.dark).clicked() {
-                self.show_stats = false;
-            }
             ui.label(egui::RichText::new("统计").strong().size(SZ_TITLE));
             ui.label(
                 egui::RichText::new("自引擎本次启动起 · 速率与峰值按每秒采样")
@@ -268,12 +265,11 @@ impl App {
                 cell_color(&c.kind, p),
             );
         }
-        if let Some(k) = hover {
-            if let Some(c) = cells.get(k) {
-                if let Some(text) = hover_lines(&c.samples) {
-                    resp.on_hover_text(text);
-                }
-            }
+        if let Some(k) = hover
+            && let Some(c) = cells.get(k)
+            && let Some(text) = hover_lines(&c.samples)
+        {
+            resp.on_hover_text(text);
         }
     }
 
