@@ -59,35 +59,100 @@ fn pick_icon_kind(phase: Phase, has_down: bool) -> IconKind {
     }
 }
 
-/// 生成 32×32 的实心圆点 RGBA（边缘半速抗锯齿），托盘与窗口图标共用。
-fn circle_rgba(rgb: [u8; 3]) -> Vec<u8> {
-    let s = 32usize;
-    let c = (s as f32 - 1.0) / 2.0;
-    let mut rgba = Vec::with_capacity(s * s * 4);
-    for y in 0..s {
-        for x in 0..s {
-            let d = ((x as f32 - c).powi(2) + (y as f32 - c).powi(2)).sqrt();
-            let px = if d <= 11.0 {
-                [rgb[0], rgb[1], rgb[2], 255]
-            } else if d <= 13.5 {
-                [rgb[0] / 2, rgb[1] / 2, rgb[2] / 2, 255]
-            } else {
-                [0, 0, 0, 0]
-            };
-            rgba.extend_from_slice(&px);
+/// 托盘/窗口图标字形：「多路归一」——三条上游线自左汇入主干，末端实心
+/// 节点表示本机统一代理入口（127.0.0.1:8888）。几何取自设计稿（视图坐标
+/// 0-100），逐像素 SDF 光栅化：对每个像素取各笔画（线段/二次贝塞尔）与
+/// 出口节点的最小距离换算覆盖率，得到边缘约 1px 抗锯齿的 RGBA。
+/// alpha 为 straight（非预乘）：tray-icon 的 Windows 后端走 CreateIcon、
+/// Linux ksni 后端仅做字节序转换，均按非预乘处理。
+type Point = (f32, f32);
+const STROKE_HALF_W: f32 = 5.0;
+const NODE_CENTER: Point = (84.0, 50.0);
+const NODE_RADIUS: f32 = 9.0;
+
+/// 笔画线段：三条上游支线 + 汇流主干（视图坐标，距离场意义下即圆头笔帽）。
+const SEGMENTS: [(Point, Point); 4] = [
+    ((12.0, 28.0), (32.0, 28.0)),
+    ((12.0, 50.0), (62.0, 50.0)),
+    ((12.0, 72.0), (32.0, 72.0)),
+    ((62.0, 50.0), (74.0, 50.0)),
+];
+
+/// 汇入主干的弯曲段（二次贝塞尔：起点、控制点、终点）。
+const CURVES: [(Point, Point, Point); 2] = [
+    ((32.0, 28.0), (50.0, 28.0), (62.0, 50.0)),
+    ((32.0, 72.0), (50.0, 72.0), (62.0, 50.0)),
+];
+
+/// 点到线段的最短距离。
+fn seg_dist(px: f32, py: f32, a: Point, b: Point) -> f32 {
+    let (vx, vy) = (b.0 - a.0, b.1 - a.1);
+    let len2 = vx * vx + vy * vy;
+    let t = if len2 > 0.0 {
+        (((px - a.0) * vx + (py - a.1) * vy) / len2).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let (dx, dy) = (px - (a.0 + t * vx), py - (a.1 + t * vy));
+    (dx * dx + dy * dy).sqrt()
+}
+
+/// 点到二次贝塞尔曲线的最短距离：均匀采样成折线取最小值
+/// （32px 渲染下 24 段的弦误差远小于半像素，足够平滑）。
+fn curve_dist(px: f32, py: f32, p0: Point, p1: Point, p2: Point) -> f32 {
+    const STEPS: usize = 24;
+    let mut prev = p0;
+    let mut best = f32::MAX;
+    for i in 1..=STEPS {
+        let t = i as f32 / STEPS as f32;
+        let mt = 1.0 - t;
+        let next = (
+            mt * mt * p0.0 + 2.0 * mt * t * p1.0 + t * t * p2.0,
+            mt * mt * p0.1 + 2.0 * mt * t * p1.1 + t * t * p2.1,
+        );
+        best = best.min(seg_dist(px, py, prev, next));
+        prev = next;
+    }
+    best
+}
+
+/// 生成 32×32 的状态色图标 RGBA（straight alpha），托盘与窗口图标共用。
+fn glyph_rgba(rgb: [u8; 3]) -> Vec<u8> {
+    const S: usize = 32;
+    const VIEW: f32 = 100.0;
+    let scale = S as f32 / VIEW;
+    let h = 0.5 / scale; // 半像素对应的视图距离：覆盖率过渡带宽约 1px
+    let mut rgba = Vec::with_capacity(S * S * 4);
+    for y in 0..S {
+        for x in 0..S {
+            let px = (x as f32 + 0.5) / scale;
+            let py = (y as f32 + 0.5) / scale;
+            let mut d = f32::MAX;
+            for &(a, b) in &SEGMENTS {
+                d = d.min(seg_dist(px, py, a, b));
+            }
+            for &(p0, p1, p2) in &CURVES {
+                d = d.min(curve_dist(px, py, p0, p1, p2));
+            }
+            let d_node =
+                ((px - NODE_CENTER.0).powi(2) + (py - NODE_CENTER.1).powi(2)).sqrt() - NODE_RADIUS;
+            let cov_stroke = ((STROKE_HALF_W + h - d) / (2.0 * h)).clamp(0.0, 1.0);
+            let cov_node = ((h - d_node) / (2.0 * h)).clamp(0.0, 1.0);
+            let cov = cov_stroke.max(cov_node);
+            rgba.extend_from_slice(&[rgb[0], rgb[1], rgb[2], (255.0 * cov).round() as u8]);
         }
     }
     rgba
 }
 
-fn circle_icon(rgb: [u8; 3]) -> Result<Icon> {
-    let rgba = circle_rgba(rgb);
+fn glyph_icon(rgb: [u8; 3]) -> Result<Icon> {
+    let rgba = glyph_rgba(rgb);
     Icon::from_rgba(rgba, 32, 32).context("托盘图标创建失败")
 }
 
 /// 窗口图标（GUI 启动时使用，全平台可用）。
 pub fn app_icon_rgba() -> Vec<u8> {
-    circle_rgba(GREEN)
+    glyph_rgba(GREEN)
 }
 
 /// 引擎状态行：● 运行中 · 监听地址（有故障上游时附计数）。
@@ -178,10 +243,10 @@ impl TrayHandle {
     /// 全平台统一构建：Windows 走原生后端；Linux 走 ksni（D-Bus SNI），
     /// 左键 activate → [`TrayIconEvent`]，右键菜单由托盘宿主渲染。
     pub fn new(ctx: egui::Context) -> Result<Self> {
-        let icon_running = circle_icon(GREEN)?;
-        let icon_degraded = circle_icon(ORANGE)?;
-        let icon_stopped = circle_icon(GRAY)?;
-        let icon_error = circle_icon(RED)?;
+        let icon_running = glyph_icon(GREEN)?;
+        let icon_degraded = glyph_icon(ORANGE)?;
+        let icon_stopped = glyph_icon(GRAY)?;
+        let icon_error = glyph_icon(RED)?;
 
         let menu = Menu::new();
         let title_item = MenuItem::new(
@@ -397,12 +462,25 @@ mod tests {
     }
 
     #[test]
-    fn circle_rgba_dims_and_alpha_layout() {
-        let rgba = circle_rgba(GREEN);
+    fn glyph_rgba_dims_and_alpha_layout() {
+        let rgba = glyph_rgba(GREEN);
         assert_eq!(rgba.len(), 32 * 32 * 4);
-        // 中心不透明，四角透明
-        assert_eq!(rgba[16 * 32 * 4 + 16 * 4 + 3], 255);
-        assert_eq!(rgba[3], 0);
+        // 四角透明
+        for (x, y) in [(0, 0), (31, 0), (0, 31), (31, 31)] {
+            assert_eq!(rgba[(y * 32 + x) * 4 + 3], 0, "角像素 ({x},{y}) 应透明");
+        }
+        // 支线间隙透明（上游三线互不粘连）
+        assert_eq!(rgba[(11 * 32 + 5) * 4 + 3], 0, "支线间隙 (5,11) 应透明");
+        // 中线、主干末端与出口节点不透明
+        for (x, y) in [(5, 16), (16, 16), (26, 16)] {
+            assert_eq!(
+                rgba[(y * 32 + x) * 4 + 3],
+                255,
+                "字形像素 ({x},{y}) 应不透明"
+            );
+        }
+        // straight alpha：不透明处颜色即状态色本身
+        assert_eq!(rgba[(16 * 32 + 16) * 4], GREEN[0]);
     }
 
     #[test]

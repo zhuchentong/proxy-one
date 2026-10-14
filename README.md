@@ -140,7 +140,7 @@ curl -x socks5h://127.0.0.1:8888 https://www.google.com
 
 ### 托盘图标
 
-- 三态图标：绿点 = 运行中，灰点 = 已停止，红点 = 端口绑定失败；悬停显示当前状态与监听地址。
+- 状态图标（多路汇流标）：绿 = 运行中，橙 = 运行中但有上游故障，灰 = 已停止，红 = 端口绑定失败；悬停显示当前状态与监听地址。
 - **左键单击**：显示 / 隐藏主窗口（隐藏后引擎继续在后台代理，不受影响）。
 - **右键菜单**：显示主窗口 / 引擎运行中（勾选 = 启动，点击切换）/ 系统代理（勾选 = 接管）/ 测试全部上游 / 上游状态（各上游健康/延迟/流量）/ 打开配置文件 / 退出。
 - 点击窗口 ✕ 默认隐藏到托盘；彻底退出请使用托盘菜单「退出」。
@@ -272,7 +272,7 @@ src/
     autostart_linux.rs    开机启动（Linux）：XDG autostart 桌面项
     sysproxy_windows.rs   系统代理（Windows）：WinINet 注册表 + 快照恢复/崩溃自愈/冲突保护
     sysproxy_linux.rs     系统代理（Linux）：environment.d 片段写入
-    tray.rs           托盘：三态图标/右键菜单（Windows 原生，Linux KSNI/D-Bus）
+    tray.rs           托盘：状态图标/右键菜单（Windows 原生，Linux KSNI/D-Bus）
   ui/
     ui.rs            App 状态与 eframe 编排（logic 托盘/关闭拦截 + 布局）
     update_flow.rs   自动更新的 UI 编排：检查/下载后台线程与状态机
