@@ -4,6 +4,7 @@
 use eframe::egui;
 
 use super::App;
+use super::Page;
 use super::theme::{GREEN, ORANGE, RED, SZ_BODY, SZ_SECTION, SZ_SMALL, SZ_TINY, SZ_TITLE, palette};
 use super::widgets::{
     ButtonVariant, card, chip, icon_button, latency_color, log_line, phase_indicator, status_glyph,
@@ -14,28 +15,6 @@ use crate::engine::{Phase, Snapshot};
 use crate::util::fmt_bytes;
 
 impl App {
-    pub(crate) fn header(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("proxyone").strong().size(SZ_TITLE));
-            ui.label(
-                egui::RichText::new("代理故障切换网关")
-                    .weak()
-                    .size(SZ_SMALL),
-            );
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let theme_label = if self.dark { "☀" } else { "🌙" };
-                let hover = if self.dark {
-                    "切换到浅色主题"
-                } else {
-                    "切换到深色主题"
-                };
-                if icon_button(ui, theme_label, hover, self.dark).clicked() {
-                    self.toggle_theme(ui.ctx());
-                }
-            });
-        });
-    }
-
     pub(crate) fn status_card(&mut self, ui: &mut egui::Ui, snap: &Snapshot) {
         let p = palette(self.dark);
         let (dot, label) = phase_indicator(snap.phase);
@@ -125,9 +104,6 @@ impl App {
                     .size(SZ_SECTION),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if icon_button(ui, "⚙", "打开设置面板", self.dark).clicked() {
-                    self.show_settings = true;
-                }
                 if styled_button_ex(ui, "＋ 添加", ButtonVariant::Ghost, self.dark, 24.0).clicked()
                 {
                     self.show_add = !self.show_add;
@@ -141,12 +117,6 @@ impl App {
                     } else {
                         self.notify(("引擎未运行，无法测试上游".into(), ORANGE));
                     }
-                }
-                if styled_button_ex(ui, "统计", ButtonVariant::Ghost, self.dark, 24.0)
-                    .on_hover_text("按上游查看健康状态、流量与峰值")
-                    .clicked()
-                {
-                    self.show_stats = true;
                 }
             });
         });
@@ -349,7 +319,7 @@ impl App {
                     if icon_button(ui, "↗", "打开独立日志页（支持关键字与级别筛选）", self.dark)
                         .clicked()
                     {
-                        self.show_logs = true;
+                        self.page = Page::Logs;
                     }
                     if styled_button(ui, "复制全部", ButtonVariant::Ghost, self.dark).clicked()
                     {

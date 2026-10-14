@@ -8,7 +8,7 @@ use eframe::egui;
 
 use super::App;
 use super::theme::{GRAY, GREEN, RED, SZ_SMALL, SZ_TINY, SZ_TITLE, YELLOW, palette};
-use super::widgets::{ButtonVariant, card, icon_button, log_line, styled_button_ex};
+use super::widgets::{ButtonVariant, card, log_line, styled_button_ex};
 use crate::engine::{LogLevel, Snapshot};
 
 /// 级别筛选：四档独立开关，默认全部点亮。
@@ -50,7 +50,7 @@ impl App {
     pub(crate) fn logs_view(&mut self, ui: &mut egui::Ui, snap: &Snapshot) {
         let p = palette(self.dark);
         if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-            self.show_logs = false;
+            self.page = super::Page::Main;
         }
 
         // 先算筛选结果：标题行的「复制」与筛选行的计数、日志体共用同一份
@@ -68,9 +68,6 @@ impl App {
         let filtered = !query.is_empty() || !self.log_levels.all_on();
 
         ui.horizontal(|ui| {
-            if icon_button(ui, "←", "返回主界面 (Esc)", self.dark).clicked() {
-                self.show_logs = false;
-            }
             ui.label(egui::RichText::new("日志").strong().size(SZ_TITLE));
             ui.label(
                 egui::RichText::new(format!(

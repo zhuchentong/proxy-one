@@ -5,6 +5,7 @@
 
 mod cards;
 mod logs;
+mod nav;
 mod settings;
 mod stats;
 mod theme;
@@ -23,6 +24,30 @@ use cards::RowAction;
 use theme::palette;
 use update_flow::UpdateUi;
 
+/// 页面枚举：由侧边导航栏驱动，取代原先三个独立的页面开关布尔量。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Page {
+    Main,
+    Stats,
+    Logs,
+    Settings,
+}
+
+impl Page {
+    /// 侧栏导航项：(页面, 悬停提示)，顺序即侧栏自上而下的顺序。
+    pub(crate) const NAV: [(Page, &'static str); 4] = [
+        (Page::Main, "主页"),
+        (Page::Stats, "统计"),
+        (Page::Logs, "日志"),
+        (Page::Settings, "设置"),
+    ];
+
+    /// 是否渲染「保存并应用」页脚：仅含编辑语义的页面需要。
+    pub(crate) fn shows_footer(self) -> bool {
+        matches!(self, Page::Main | Page::Settings)
+    }
+}
+
 pub struct App {
     pub(crate) engine: EngineHandle,
     pub(crate) cfg: config::Config,
@@ -30,7 +55,8 @@ pub struct App {
     pub(crate) parse_error: Option<String>,
     pub(crate) dark: bool,
     pub(crate) show_add: bool,
-    pub(crate) show_settings: bool,
+    /// 当前页面：由侧边导航栏切换
+    pub(crate) page: Page,
     pub(crate) new_name: String,
     pub(crate) new_addr: String,
     pub(crate) new_kind: config::UpstreamKind,
@@ -40,12 +66,9 @@ pub struct App {
     pub(crate) pending_action: Option<RowAction>,
     pub(crate) autostart: bool,
     pub(crate) log_expanded: bool,
-    /// 独立日志页：打开状态与筛选条件（关键字 + 级别点亮），跨开合保留
-    pub(crate) show_logs: bool,
+    /// 独立日志页：筛选条件（关键字 + 级别点亮），跨开合保留
     pub(crate) log_search: String,
     pub(crate) log_levels: logs::LevelFilter,
-    /// 独立统计页：健康状态、流量与峰值的按上游汇总
-    pub(crate) show_stats: bool,
     /// 统计页：全局每秒总速率样本（↑+↓ 字节/秒），容量 900 ≈ 最近 15 分钟
     pub(crate) rate_history: std::collections::VecDeque<stats::samples::Sample>,
     /// 采样节流：上次入样时刻
@@ -86,7 +109,7 @@ impl App {
             parse_error: loaded.parse_error,
             dark,
             show_add: false,
-            show_settings: false,
+            page: Page::Main,
             new_name: String::new(),
             new_addr: String::new(),
             new_kind: config::UpstreamKind::Auto,
@@ -95,10 +118,8 @@ impl App {
             pending_action: None,
             autostart: crate::platform::autostart::is_enabled(),
             log_expanded: false,
-            show_logs: false,
             log_search: String::new(),
             log_levels: logs::LevelFilter::default(),
-            show_stats: false,
             rate_history: std::collections::VecDeque::new(),
             last_sample: None,
             last_totals: (0, 0),
@@ -321,6 +342,7 @@ impl eframe::App for App {
         // 每帧采样与页面开关无关：保证统计页热力图始终是真正的「最近 15 分钟」
         self.sample_rates(&snap);
 
+        nav::side_panel(self, ui);
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::new()
@@ -329,17 +351,16 @@ impl eframe::App for App {
             )
             .show(ui, |ui| {
                 ui.set_min_width(ui.available_width());
-                if self.show_settings {
-                    self.settings_view(ui);
-                } else if self.show_logs {
-                    self.logs_view(ui, &snap);
-                } else if self.show_stats {
-                    self.stats_view(ui, &snap);
-                } else {
-                    self.main_view(ui, &snap);
+                match self.page {
+                    Page::Main => self.main_view(ui, &snap),
+                    Page::Stats => self.stats_view(ui, &snap),
+                    Page::Logs => self.logs_view(ui, &snap),
+                    Page::Settings => self.settings_view(ui),
                 }
-                ui.add_space(6.0);
-                self.footer(ui);
+                if self.page.shows_footer() {
+                    ui.add_space(6.0);
+                    self.footer(ui);
+                }
             });
 
         ctx.request_repaint_after(std::time::Duration::from_secs(1));
@@ -426,8 +447,6 @@ impl App {
 
     /// 主界面：状态卡 + 上游列表 + 日志。
     fn main_view(&mut self, ui: &mut egui::Ui, snap: &crate::engine::Snapshot) {
-        self.header(ui);
-        ui.add_space(6.0);
         self.status_card(ui, snap);
         self.error_banner(ui);
         ui.add_space(8.0);
@@ -468,5 +487,28 @@ impl App {
 
         ui.add_space(6.0);
         self.log_card(ui, snap, log_body_max);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Page;
+
+    #[test]
+    fn footer_shows_only_on_editing_pages() {
+        assert!(Page::Main.shows_footer());
+        assert!(Page::Settings.shows_footer());
+        assert!(!Page::Stats.shows_footer());
+        assert!(!Page::Logs.shows_footer());
+    }
+
+    #[test]
+    fn nav_lists_four_pages_in_order() {
+        assert_eq!(
+            Page::NAV.map(|(p, _)| p),
+            [Page::Main, Page::Stats, Page::Logs, Page::Settings]
+        );
+        assert_eq!(Page::NAV[0].1, "主页");
+        assert_eq!(Page::NAV[3].1, "设置");
     }
 }

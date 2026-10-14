@@ -46,8 +46,8 @@ fn run_headless(cfg: config::Config) {
 fn run_gui(loaded: LoadedConfig, dark: bool, minimized: bool) -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
-            .with_inner_size([440.0, 700.0])
-            .with_min_inner_size([400.0, 560.0])
+            .with_inner_size([520.0, 700.0])
+            .with_min_inner_size([480.0, 560.0])
             .with_icon(eframe::egui::IconData {
                 width: 32,
                 height: 32,

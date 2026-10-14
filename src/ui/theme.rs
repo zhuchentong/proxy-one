@@ -24,6 +24,8 @@ pub(crate) const RADIUS_CTRL: u8 = 6;
 
 pub(crate) struct Palette {
     pub bg: egui::Color32,
+    /// 侧边导航栏底色：与内容区形成一档层次
+    pub rail: egui::Color32,
     pub card: egui::Color32,
     pub card_stroke: egui::Color32,
     pub field: egui::Color32,
@@ -37,6 +39,7 @@ pub(crate) fn palette(dark: bool) -> Palette {
     if dark {
         Palette {
             bg: egui::Color32::from_rgb(0x15, 0x16, 0x1a),
+            rail: egui::Color32::from_rgb(0x10, 0x11, 0x14),
             card: egui::Color32::from_rgb(0x1f, 0x21, 0x26),
             card_stroke: egui::Color32::from_rgb(0x2c, 0x2f, 0x36),
             field: egui::Color32::from_rgb(0x17, 0x18, 0x1d),
@@ -48,6 +51,7 @@ pub(crate) fn palette(dark: bool) -> Palette {
     } else {
         Palette {
             bg: egui::Color32::from_rgb(0xf2, 0xf4, 0xf7),
+            rail: egui::Color32::from_rgb(0xe9, 0xed, 0xf2),
             card: egui::Color32::WHITE,
             card_stroke: egui::Color32::from_rgb(0xe2, 0xe6, 0xeb),
             field: egui::Color32::from_rgb(0xf6, 0xf7, 0xf9),

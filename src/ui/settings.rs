@@ -10,9 +10,7 @@ use eframe::egui;
 use super::App;
 use super::theme::{GREEN, ORANGE, SZ_SECTION, SZ_SMALL, SZ_TINY, SZ_TITLE, palette};
 use super::update_flow::UpdateUi;
-use super::widgets::{
-    ButtonVariant, card, icon_button, styled_button, styled_button_ex, switch_row,
-};
+use super::widgets::{ButtonVariant, card, styled_button, styled_button_ex, switch_row};
 use crate::util::fmt_bytes;
 
 impl App {
@@ -20,13 +18,10 @@ impl App {
     pub(crate) fn settings_view(&mut self, ui: &mut egui::Ui) {
         let p = palette(self.dark);
         if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-            self.show_settings = false;
+            self.page = super::Page::Main;
         }
 
         ui.horizontal(|ui| {
-            if icon_button(ui, "←", "返回主界面 (Esc)", self.dark).clicked() {
-                self.show_settings = false;
-            }
             ui.label(egui::RichText::new("设置").strong().size(SZ_TITLE));
             if let Some((m, c)) = &self.msg {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
