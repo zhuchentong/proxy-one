@@ -95,6 +95,31 @@ fn nav_button(
 mod tests {
     use super::*;
 
+    /// 纹理必须纯白：`Image::tint` 是乘法混合，`白 × tint = tint`；
+    /// 若 SVG 用 `currentColor`（usvg 按 SVG 规范解析为黑），`黑 × tint = 黑`，染色失效。
+    #[test]
+    fn icons_rasterize_to_white_for_tinting() {
+        let svgs: [&[u8]; 5] = [
+            include_bytes!("../../assets/icons/house.svg"),
+            include_bytes!("../../assets/icons/chart-column.svg"),
+            include_bytes!("../../assets/icons/file-text.svg"),
+            include_bytes!("../../assets/icons/settings.svg"),
+            include_bytes!("../../assets/icons/sun-moon.svg"),
+        ];
+        for (i, svg) in svgs.iter().enumerate() {
+            let img = egui_extras::image::load_svg_bytes(svg, &Default::default())
+                .unwrap_or_else(|e| panic!("图标 {i} 光栅化失败: {e}"));
+            let solid: Vec<_> = img.pixels.iter().filter(|c| c.a() == 255).collect();
+            assert!(!solid.is_empty(), "图标 {i} 无实心像素");
+            assert!(
+                solid
+                    .iter()
+                    .all(|c| c.r() == 255 && c.g() == 255 && c.b() == 255),
+                "图标 {i} 实心像素必须纯白（tint 乘法染色依赖）"
+            );
+        }
+    }
+
     /// 每个页面都能解析出一个图标源（路径资源存在性在编译期已保证）。
     #[test]
     fn every_page_has_an_icon_source() {
