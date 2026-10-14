@@ -61,6 +61,8 @@ fn run_gui(loaded: LoadedConfig, dark: bool, minimized: bool) -> eframe::Result<
         Box::new(move |cc| {
             ui::install_fonts(&cc.egui_ctx);
             ui::apply_theme(&cc.egui_ctx, dark);
+            // SVG 图标（侧边栏 Lucide 图标）按显示尺寸光栅化所需
+            egui_extras::install_image_loaders(&cc.egui_ctx);
             let mut app = ui::App::new(loaded);
             match platform::tray::TrayHandle::new(cc.egui_ctx.clone()) {
                 Ok(t) => app.set_tray(t),
