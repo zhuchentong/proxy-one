@@ -13,7 +13,6 @@ pub(crate) const ORANGE: egui::Color32 = egui::Color32::from_rgb(0xe0, 0x7b, 0x3
 /// 字号刻度：全 UI 只使用这几档，保证节奏一致。
 pub(crate) const SZ_TITLE: f32 = 15.0;
 pub(crate) const SZ_SECTION: f32 = 12.5;
-pub(crate) const SZ_BODY: f32 = 11.5;
 pub(crate) const SZ_SMALL: f32 = 11.0;
 pub(crate) const SZ_TINY: f32 = 10.5;
 /// 统计页大数字专用档。

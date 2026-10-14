@@ -4,10 +4,10 @@
 use eframe::egui;
 
 use super::App;
-use super::Page;
-use super::theme::{GREEN, ORANGE, RED, SZ_BODY, SZ_SECTION, SZ_SMALL, SZ_TINY, SZ_TITLE, palette};
+use super::stats::samples;
+use super::theme::{GREEN, ORANGE, RED, SZ_NUM, SZ_SECTION, SZ_SMALL, SZ_TINY, palette};
 use super::widgets::{
-    ButtonVariant, card, chip, icon_button, latency_color, log_line, phase_indicator, status_glyph,
+    ButtonVariant, card, chip, icon_button, latency_color, phase_indicator, status_glyph,
     styled_button, styled_button_ex,
 };
 use crate::config::{self, UpstreamKind};
@@ -24,9 +24,10 @@ impl App {
         );
         card(ui, p.card, p.card_stroke, |ui| {
             ui.set_min_width(ui.available_width());
+            // 行 1：大状态 + 启停
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new("●").color(dot).size(17.0));
-                ui.label(egui::RichText::new(label).strong().size(SZ_TITLE));
+                ui.label(egui::RichText::new(label).strong().size(SZ_NUM));
                 if let Some(e) = &snap.error {
                     ui.colored_label(RED, egui::RichText::new(e).size(SZ_SMALL));
                 }
@@ -44,6 +45,33 @@ impl App {
                     }
                 });
             });
+            // 行 2：实时速率大数字 + 迷你速率图（复用统计页每秒采样）
+            let (tot_up, tot_down, tot_conns, tot_rup, tot_rdown) = snap.traffic_totals();
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("↑").size(SZ_NUM).color(p.weak));
+                ui.label(
+                    egui::RichText::new(format!("{}/s", fmt_bytes(tot_rup)))
+                        .monospace()
+                        .size(SZ_NUM),
+                );
+                ui.add_space(12.0);
+                ui.label(egui::RichText::new("↓").size(SZ_NUM).color(p.weak));
+                ui.label(
+                    egui::RichText::new(format!("{}/s", fmt_bytes(tot_rdown)))
+                        .monospace()
+                        .size(SZ_NUM),
+                );
+                let w = (ui.available_width() - 4.0).clamp(40.0, 160.0);
+                draw_sparkline(
+                    ui,
+                    &self.rate_history,
+                    egui::vec2(w, 26.0),
+                    GREEN.gamma_multiply(0.85),
+                    p.field,
+                );
+            });
+            // 行 3：监听地址 + 当前上游 + 通知消息
             ui.add_space(2.0);
             ui.horizontal(|ui| {
                 ui.label(
@@ -61,24 +89,19 @@ impl App {
                     });
                 }
             });
-            // 累计转发流量（所有上游合计）；有活动连接时附带当前总速率
-            let (tot_up, tot_down, tot_conns, tot_rup, tot_rdown) = snap.traffic_totals();
-            if tot_conns > 0 || tot_rup > 0 || tot_rdown > 0 {
+            // 行 4（可选）：累计转发流量与连接数（有活动才显示）
+            if tot_conns > 0 || tot_up > 0 || tot_down > 0 {
                 ui.add_space(2.0);
-                let mut line = format!(
-                    "转发 ↑ {}  ↓ {}  ·  连接 {}",
-                    fmt_bytes(tot_up),
-                    fmt_bytes(tot_down),
-                    tot_conns
+                ui.label(
+                    egui::RichText::new(format!(
+                        "累计 ↑ {}  ↓ {}  ·  连接 {}",
+                        fmt_bytes(tot_up),
+                        fmt_bytes(tot_down),
+                        tot_conns
+                    ))
+                    .size(SZ_TINY)
+                    .color(p.weak),
                 );
-                if tot_rup > 0 || tot_rdown > 0 {
-                    line.push_str(&format!(
-                        "  ·  当前 ↑ {}/s  ↓ {}/s",
-                        fmt_bytes(tot_rup),
-                        fmt_bytes(tot_rdown)
-                    ));
-                }
-                ui.label(egui::RichText::new(line).size(SZ_TINY).color(p.weak));
             }
         });
     }
@@ -296,64 +319,6 @@ impl App {
         });
     }
 
-    pub(crate) fn log_card(&mut self, ui: &mut egui::Ui, snap: &Snapshot, body_max: f32) {
-        let p = palette(self.dark);
-        card(ui, p.card, p.card_stroke, |ui| {
-            ui.set_min_width(ui.available_width());
-            ui.horizontal(|ui| {
-                let (arrow, hover) = if self.log_expanded {
-                    ("▼", "收起日志")
-                } else {
-                    ("▲", "展开日志")
-                };
-                if icon_button(ui, arrow, hover, self.dark).clicked() {
-                    self.log_expanded = !self.log_expanded;
-                }
-                ui.label(egui::RichText::new("日志").strong().size(SZ_BODY));
-                ui.label(
-                    egui::RichText::new(format!("最近 {} 条", snap.logs.len()))
-                        .size(SZ_TINY)
-                        .color(p.weak),
-                );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if icon_button(ui, "↗", "打开独立日志页（支持关键字与级别筛选）", self.dark)
-                        .clicked()
-                    {
-                        self.page = Page::Logs;
-                    }
-                    if styled_button(ui, "复制全部", ButtonVariant::Ghost, self.dark).clicked()
-                    {
-                        let text = snap
-                            .logs
-                            .iter()
-                            .map(|e| e.line())
-                            .collect::<Vec<_>>()
-                            .join("\n");
-                        ui.ctx().copy_text(text);
-                        self.notify(("日志已复制到剪贴板".into(), GREEN));
-                    }
-                    if styled_button(ui, "清空", ButtonVariant::Ghost, self.dark).clicked() {
-                        self.engine.clear_logs();
-                    }
-                });
-            });
-            // 日志体取「卡片内实测剩余」与「外部预算上限」的较小者：
-            // 折叠时上限 102，展开时填满预算空间，两个方向都不会把页脚挤出屏幕
-            let avail_body = (ui.available_height() - 2.0).max(60.0);
-            let body_h = avail_body.min(body_max);
-            egui::ScrollArea::vertical()
-                .id_salt("logs")
-                .stick_to_bottom(true)
-                .auto_shrink([false, false])
-                .max_height(body_h)
-                .show(ui, |ui| {
-                    for e in &snap.logs {
-                        log_line(ui, e);
-                    }
-                });
-        });
-    }
-
     /// 页脚：未保存标记 + 「保存并应用」。自带 8px 底部留白，
     /// 按钮永不贴住窗口下边缘；调用方的预算应预留 [`App::FOOTER_H`] 高度。
     pub(crate) fn footer(&mut self, ui: &mut egui::Ui) {
@@ -400,6 +365,32 @@ impl App {
         self.new_addr.clear();
         self.show_add = false;
         self.dirty = true;
+    }
+}
+
+/// Hero 迷你速率图：底部场色 + 绿色折线（取最近 60 个每秒采样）。
+fn draw_sparkline(
+    ui: &mut egui::Ui,
+    history: &std::collections::VecDeque<samples::Sample>,
+    size: egui::Vec2,
+    line: egui::Color32,
+    bg: egui::Color32,
+) {
+    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 4.0, bg);
+    let pts = samples::sparkline_points(history, 60);
+    if pts.len() >= 2 {
+        let points: Vec<egui::Pos2> = pts
+            .iter()
+            .map(|(x, y)| {
+                egui::pos2(
+                    rect.left() + 2.0 + x * (rect.width() - 4.0),
+                    rect.top() + 2.0 + y * (rect.height() - 4.0),
+                )
+            })
+            .collect();
+        painter.add(egui::Shape::line(points, egui::Stroke::new(1.5, line)));
     }
 }
 

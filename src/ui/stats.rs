@@ -90,6 +90,35 @@ pub(crate) mod samples {
         }
     }
 
+    /// 迷你速率图的归一化坐标：取尾部 `n` 个样本，映射到 `x∈[0,1]`（左→右）、
+    /// `y∈[0,1]`（0=顶部峰值，1=底部零速）。峰值 0（全零/空）时平线贴底防除零。
+    pub(crate) fn sparkline_points(history: &VecDeque<Sample>, n: usize) -> Vec<(f32, f32)> {
+        let start = history.len().saturating_sub(n);
+        let slice: Vec<_> = history.iter().skip(start).collect();
+        if slice.is_empty() {
+            return Vec::new();
+        }
+        let peak = slice.iter().map(|s| s.rate).max().unwrap_or(0);
+        let k = slice.len();
+        slice
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                let x = if k == 1 {
+                    0.0
+                } else {
+                    i as f32 / (k - 1) as f32
+                };
+                let y = if peak == 0 {
+                    1.0
+                } else {
+                    1.0 - s.rate as f32 / peak as f32
+                };
+                (x, y)
+            })
+            .collect()
+    }
+
     /// 时间线格子悬停文本：每行一个样本，`时刻 ✓ 延迟` 或 `时刻 ✗`；空格返回 None。
     pub(crate) fn hover_lines(samples: &[crate::engine::CheckSample]) -> Option<String> {
         if samples.is_empty() {
@@ -487,6 +516,55 @@ mod tests {
     use super::samples::{SAMPLE_CAP, Sample, heat_level, push_sample};
     use std::collections::VecDeque;
     use std::time::{Duration, Instant};
+
+    mod sparkline {
+        use crate::ui::stats::samples::{Sample, sparkline_points};
+        use std::collections::VecDeque;
+
+        fn sample(rate: u64) -> Sample {
+            Sample {
+                at: chrono::Local::now(),
+                rate,
+            }
+        }
+
+        #[test]
+        fn empty_history_yields_no_points() {
+            assert!(sparkline_points(&VecDeque::new(), 30).is_empty());
+        }
+
+        #[test]
+        fn points_normalize_by_peak_bottom_to_top() {
+            let h: VecDeque<_> = [0u64, 100, 200, 400].iter().map(|&r| sample(r)).collect();
+            let pts = sparkline_points(&h, 4);
+            assert_eq!(pts.len(), 4);
+            // 零速率贴底（y=1），峰值触顶（y=0）
+            assert!((pts[0].1 - 1.0).abs() < 1e-6);
+            assert!((pts[3].1 - 0.0).abs() < 1e-6);
+            // x 单调递增覆盖 0..1
+            assert!((pts[0].0).abs() < 1e-6 && (pts[3].0 - 1.0).abs() < 1e-6);
+        }
+
+        #[test]
+        fn flat_zero_history_sits_at_bottom() {
+            let h: VecDeque<_> = [0u64, 0, 0].iter().map(|&r| sample(r)).collect();
+            assert!(
+                sparkline_points(&h, 3)
+                    .iter()
+                    .all(|(_, y)| (*y - 1.0).abs() < 1e-6)
+            );
+        }
+
+        #[test]
+        fn takes_only_the_last_n_samples() {
+            let h: VecDeque<_> = (0..10u64).map(|r| sample(r * 10)).collect();
+            let pts = sparkline_points(&h, 4);
+            assert_eq!(pts.len(), 4);
+            // 截取尾部：首点是全局第 6 个样本（rate=60），非峰值（rate=90）→ 未触顶
+            assert!(pts[0].1 > 0.0);
+            assert!((pts[3].1 - 0.0).abs() < 1e-6);
+        }
+    }
 
     mod timeline_ui {
         use crate::engine::{CellKind, CheckSample, TimelineCell};

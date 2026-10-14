@@ -65,7 +65,6 @@ pub struct App {
     pub(crate) new_top: bool,
     pub(crate) pending_action: Option<RowAction>,
     pub(crate) autostart: bool,
-    pub(crate) log_expanded: bool,
     /// 独立日志页：筛选条件（关键字 + 级别点亮），跨开合保留
     pub(crate) log_search: String,
     pub(crate) log_levels: logs::LevelFilter,
@@ -117,7 +116,6 @@ impl App {
             new_top: false,
             pending_action: None,
             autostart: crate::platform::autostart::is_enabled(),
-            log_expanded: false,
             log_search: String::new(),
             log_levels: logs::LevelFilter::default(),
             rate_history: std::collections::VecDeque::new(),
@@ -453,22 +451,8 @@ impl App {
         self.section_row(ui, snap);
         ui.add_space(4.0);
 
-        // 高度预算全部实测：remaining 是在状态卡/错误横幅之后量出的真实余量，
-        // 下方依次是 卡片区 + 6 + 日志卡 + 6 + footer(App::FOOTER_H，含底部留白)，
-        // 逐项扣减并留有富余，保证「保存并应用」任何窗口尺寸下都不贴窗口边缘。
-        let remaining = ui.available_height();
-        const SPACING: f32 = 12.0; // 卡片区/日志卡/页脚之间的两处 6px 间距
-        const LOG_CHROME: f32 = 44.0; // 日志卡边距 + 标题行 + 日志体之外的部分
-        let budget = remaining - Self::FOOTER_H - SPACING;
-        let (cards_h, log_body_max) = if self.log_expanded {
-            let cards = ((budget - LOG_CHROME) * 0.35).clamp(64.0, 150.0);
-            (cards, (budget - cards - LOG_CHROME).max(60.0))
-        } else {
-            (
-                (budget - LOG_CHROME - 102.0).max(80.0),
-                102.0f32.min((budget - LOG_CHROME).max(60.0)),
-            )
-        };
+        // 上游列表占满剩余高度：预算仅预留页脚（App::FOOTER_H）与其上 6px 间距
+        let cards_h = (ui.available_height() - Self::FOOTER_H - 6.0).max(80.0);
         egui::ScrollArea::vertical()
             .id_salt("cards")
             .auto_shrink(false)
@@ -484,9 +468,6 @@ impl App {
                 }
             });
         self.apply_pending_row_action();
-
-        ui.add_space(6.0);
-        self.log_card(ui, snap, log_body_max);
     }
 }
 
