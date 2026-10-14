@@ -5,13 +5,15 @@ use eframe::egui;
 
 use super::App;
 use super::stats::samples;
-use super::theme::{GREEN, ORANGE, RED, SZ_NUM, SZ_SECTION, SZ_SMALL, SZ_TINY, palette};
-use super::widgets::{
-    ButtonVariant, card, chip, icon_button, latency_color, phase_indicator, status_glyph,
-    styled_button, styled_button_ex,
+use super::theme::{
+    GRAY, GREEN, ORANGE, RED, SZ_NUM, SZ_SECTION, SZ_SMALL, SZ_TINY, YELLOW, palette,
 };
-use crate::config::{self, UpstreamKind};
-use crate::engine::{Phase, Snapshot};
+use super::widgets::{
+    ButtonVariant, card, chip, latency_color, phase_indicator, status_glyph, styled_button,
+    styled_button_ex,
+};
+use crate::config::{self, UpstreamConfig, UpstreamKind};
+use crate::engine::{HealthStatus, Phase, Snapshot};
 use crate::util::fmt_bytes;
 
 impl App {
@@ -151,105 +153,132 @@ impl App {
         let is_active = st
             .map(|u| Some(u.name.as_str()) == snap.active.as_deref())
             .unwrap_or(false);
+        let testing = st.is_some_and(|u| u.testing);
+        let accent = row_accent(st.map(|u| u.status), testing);
         let stroke = if is_active { GREEN } else { p.card_stroke };
-        card(ui, p.card, stroke, |ui| {
+        let editing = self.row_edit.as_ref().is_some_and(|e| e.idx == i);
+
+        let mut begin = false;
+        let mut confirm = false;
+        let mut cancel = false;
+        let resp = card(ui, p.card, stroke, |ui| {
             ui.set_min_width(ui.available_width());
-            ui.horizontal(|ui| {
+            // 行高不因 hover 抖动：操作钮常驻占位，非 hover 时着色弱化到近隐形
+            let hovered = ui.rect_contains_pointer(ui.max_rect());
+            let action = if hovered || editing {
+                p.text
+            } else {
+                p.card_stroke
+            };
+            if editing {
+                let Some(edit) = &mut self.row_edit else {
+                    return;
+                };
                 let pri = self.cfg.upstreams[i].priority;
-                chip(ui, &format!("P{pri}"), GREEN, p.chip);
-                if ui
-                    .add(
-                        egui::TextEdit::singleline(&mut self.cfg.upstreams[i].name)
-                            .frame(egui::Frame::NONE)
-                            .desired_width(78.0)
+                ui.horizontal(|ui| {
+                    chip(ui, &format!("P{pri}"), GREEN, p.chip);
+                    ui.add(
+                        egui::TextEdit::singleline(&mut edit.draft_mut().name)
+                            .desired_width(70.0)
                             .font(egui::TextStyle::Body),
-                    )
-                    .changed()
-                {
-                    self.dirty = true;
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if st.is_some_and(|u| u.testing) {
-                        // 手动测试进行中：旋转等待动画替代延迟数字
-                        ui.add(
-                            egui::Spinner::new()
-                                .size(13.0)
-                                .color(palette(self.dark).text),
-                        );
-                        ui.label(
-                            egui::RichText::new("测试中")
-                                .size(SZ_SMALL)
-                                .color(palette(self.dark).weak),
-                        );
-                    } else {
-                        match st.and_then(|u| u.latency_ms) {
-                            Some(ms) => {
-                                let c = latency_color(ms);
+                    );
+                    ui.add(
+                        egui::TextEdit::singleline(&mut edit.draft_mut().addr)
+                            .desired_width(ui.available_width() - 220.0)
+                            .font(egui::TextStyle::Monospace),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if row_icon_button(ui, "×", "取消编辑", RED).clicked() {
+                            cancel = true;
+                        }
+                        if row_icon_button(ui, "✓", "确认修改", GREEN).clicked() {
+                            confirm = true;
+                        }
+                        let before = edit.draft().kind;
+                        egui::ComboBox::from_id_salt(format!("edit-kind{i}"))
+                            .selected_text(edit.draft().kind.label())
+                            .width(58.0)
+                            .show_ui(ui, |ui| {
+                                for k in
+                                    [UpstreamKind::Auto, UpstreamKind::Http, UpstreamKind::Socks5]
+                                {
+                                    ui.selectable_value(&mut edit.draft_mut().kind, k, k.label());
+                                }
+                            });
+                        let _ = before;
+                    });
+                });
+            } else {
+                let pri = self.cfg.upstreams[i].priority;
+                let name = self.cfg.upstreams[i].name.clone();
+                let kind_label = self.cfg.upstreams[i].kind.label();
+                ui.horizontal(|ui| {
+                    chip(ui, &format!("P{pri}"), GREEN, p.chip);
+                    ui.label(egui::RichText::new(&name).strong().size(SZ_SECTION));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if row_icon_button(ui, "×", "删除（保存后生效）", action).clicked()
+                        {
+                            self.pending_action = Some(RowAction::Del(i));
+                        }
+                        if row_icon_button(ui, "↓", "下移", action).clicked() {
+                            self.pending_action = Some(RowAction::Down(i));
+                        }
+                        if row_icon_button(ui, "↑", "上移", action).clicked() {
+                            self.pending_action = Some(RowAction::Up(i));
+                        }
+                        if row_icon_button(ui, "✎", "编辑名称/地址/类型", action).clicked()
+                        {
+                            begin = true;
+                        }
+                        // 健康状态与延迟（与旧行一致）
+                        if testing {
+                            ui.add(egui::Spinner::new().size(13.0).color(p.text));
+                            ui.label(egui::RichText::new("测试中").size(SZ_SMALL).color(p.weak));
+                        } else {
+                            match st.and_then(|u| u.latency_ms) {
+                                Some(ms) => {
+                                    let c = latency_color(ms);
+                                    ui.label(
+                                        egui::RichText::new(format!("{ms} ms"))
+                                            .size(SZ_SMALL)
+                                            .color(c),
+                                    );
+                                }
+                                None => {
+                                    ui.label(
+                                        egui::RichText::new("— ms").size(SZ_SMALL).color(p.weak),
+                                    );
+                                }
+                            };
+                        }
+                        match st {
+                            Some(u) => {
+                                let (d, c) = status_glyph(u.status);
+                                ui.label(egui::RichText::new(d).color(c).size(SZ_SECTION));
                                 ui.label(
-                                    egui::RichText::new(format!("{ms} ms"))
+                                    egui::RichText::new(u.status.label())
                                         .size(SZ_SMALL)
-                                        .color(c),
+                                        .color(p.weak),
                                 );
                             }
                             None => {
-                                ui.label(egui::RichText::new("— ms").size(SZ_SMALL).color(p.weak));
+                                ui.label(egui::RichText::new("未知").size(SZ_SMALL).color(p.weak));
                             }
-                        };
-                    }
-                    match st {
-                        Some(u) => {
-                            let (d, c) = status_glyph(u.status);
-                            ui.label(egui::RichText::new(d).color(c).size(SZ_SECTION));
-                            ui.label(
-                                egui::RichText::new(u.status.label())
-                                    .size(SZ_SMALL)
-                                    .color(p.weak),
-                            );
                         }
-                        None => {
-                            ui.label(egui::RichText::new("未知").size(SZ_SMALL).color(p.weak));
-                        }
-                    }
+                    });
                 });
-            });
-            ui.add_space(3.0);
-            ui.horizontal(|ui| {
-                if ui
-                    .add(
-                        egui::TextEdit::singleline(&mut self.cfg.upstreams[i].addr)
-                            .frame(egui::Frame::NONE)
-                            .desired_width(ui.available_width() - 132.0)
-                            .font(egui::TextStyle::Monospace),
-                    )
-                    .changed()
-                {
-                    self.dirty = true;
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if icon_button(ui, "×", "删除", self.dark).clicked() {
-                        self.pending_action = Some(RowAction::Del(i));
-                    }
-                    if icon_button(ui, "↓", "下移", self.dark).clicked() {
-                        self.pending_action = Some(RowAction::Down(i));
-                    }
-                    if icon_button(ui, "↑", "上移", self.dark).clicked() {
-                        self.pending_action = Some(RowAction::Up(i));
-                    }
-                    let before = self.cfg.upstreams[i].kind;
-                    egui::ComboBox::from_id_salt(format!("kind{i}"))
-                        .selected_text(self.cfg.upstreams[i].kind.label())
-                        .width(58.0)
-                        .show_ui(ui, |ui| {
-                            for k in [UpstreamKind::Auto, UpstreamKind::Http, UpstreamKind::Socks5]
-                            {
-                                ui.selectable_value(&mut self.cfg.upstreams[i].kind, k, k.label());
-                            }
-                        });
-                    if self.cfg.upstreams[i].kind != before {
-                        self.dirty = true;
-                    }
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new(&self.cfg.upstreams[i].addr)
+                            .monospace()
+                            .size(SZ_SMALL)
+                            .color(p.weak),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(egui::RichText::new(kind_label).size(SZ_TINY).color(p.weak));
+                    });
                 });
-            });
+            }
             // 累计转发流量；有活动窗口时前缀当前速率（1s 采样）
             if let Some(u) = st.filter(|u| u.conns > 0 || u.rate_up > 0 || u.rate_down > 0) {
                 ui.add_space(2.0);
@@ -274,6 +303,23 @@ impl App {
                 );
             }
         });
+        // 左侧状态色条：贴卡片左缘、避开圆角的竖条
+        let r = resp.response.rect;
+        let bar = egui::Rect::from_min_max(
+            r.left_top() + egui::vec2(0.0, 7.0),
+            r.left_bottom() + egui::vec2(3.0, -7.0),
+        );
+        ui.painter_at(r).rect_filled(bar, 1.0, accent);
+
+        if begin {
+            self.begin_row_edit(i);
+        }
+        if confirm {
+            self.confirm_row_edit();
+        }
+        if cancel {
+            self.cancel_row_edit();
+        }
     }
 
     pub(crate) fn add_card(&mut self, ui: &mut egui::Ui) {
@@ -340,6 +386,29 @@ impl App {
         ui.add_space(8.0);
     }
 
+    /// 进入行编辑：快照该行原值为草稿（同刻关闭其它行的编辑）。
+    pub(crate) fn begin_row_edit(&mut self, i: usize) {
+        if let Some(u) = self.cfg.upstreams.get(i) {
+            self.row_edit = Some(RowEdit::begin(i, u));
+        }
+    }
+
+    /// 确认编辑：草稿写回配置并标记未保存；行号失效时静默丢弃。
+    pub(crate) fn confirm_row_edit(&mut self) {
+        if let Some(e) = self.row_edit.take() {
+            let (i, draft) = e.confirm();
+            if let Some(slot) = self.cfg.upstreams.get_mut(i) {
+                *slot = draft;
+                self.dirty = true;
+            }
+        }
+    }
+
+    /// 取消编辑：直接丢弃草稿。
+    pub(crate) fn cancel_row_edit(&mut self) {
+        self.row_edit = None;
+    }
+
     fn submit_new_upstream(&mut self) {
         let name = self.new_name.trim().to_string();
         let addr = self.new_addr.trim().to_string();
@@ -368,6 +437,21 @@ impl App {
     }
 }
 
+/// 行内幽灵图标钮：透明底、按传入色着色（hover 排用弱化色避免行高抖动）。
+fn row_icon_button(
+    ui: &mut egui::Ui,
+    glyph: &str,
+    tooltip: &str,
+    color: egui::Color32,
+) -> egui::Response {
+    ui.add(
+        egui::Button::new(egui::RichText::new(glyph).size(12.0).color(color))
+            .fill(egui::Color32::TRANSPARENT)
+            .min_size(egui::vec2(22.0, 22.0)),
+    )
+    .on_hover_text(tooltip)
+}
+
 /// Hero 迷你速率图：底部场色 + 绿色折线（取最近 60 个每秒采样）。
 fn draw_sparkline(
     ui: &mut egui::Ui,
@@ -394,9 +478,92 @@ fn draw_sparkline(
     }
 }
 
+/// 上游行编辑状态：进入时快照原值为草稿，编辑只改草稿；
+/// 确认时消费自身返回 `(行号, 草稿)` 供写回，取消直接丢弃。
+pub(crate) struct RowEdit {
+    pub(crate) idx: usize,
+    draft: UpstreamConfig,
+}
+
+impl RowEdit {
+    pub(crate) fn begin(idx: usize, original: &UpstreamConfig) -> Self {
+        RowEdit {
+            idx,
+            draft: original.clone(),
+        }
+    }
+
+    pub(crate) fn draft(&self) -> &UpstreamConfig {
+        &self.draft
+    }
+
+    pub(crate) fn draft_mut(&mut self) -> &mut UpstreamConfig {
+        &mut self.draft
+    }
+
+    pub(crate) fn confirm(self) -> (usize, UpstreamConfig) {
+        (self.idx, self.draft)
+    }
+}
+
+/// 行首状态色条：绿=健康、红=故障、灰=未知/无数据，测试中一律黄色提示。
+fn row_accent(status: Option<HealthStatus>, testing: bool) -> egui::Color32 {
+    if testing {
+        return YELLOW;
+    }
+    match status {
+        Some(HealthStatus::Up) => GREEN,
+        Some(HealthStatus::Down) => RED,
+        Some(HealthStatus::Unknown) | None => GRAY,
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(crate) enum RowAction {
     Up(usize),
     Down(usize),
     Del(usize),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::theme::{GRAY, GREEN, RED, YELLOW};
+    use super::{RowEdit, row_accent};
+    use crate::config::UpstreamConfig;
+    use crate::engine::HealthStatus;
+
+    fn sample() -> UpstreamConfig {
+        UpstreamConfig {
+            name: "a".into(),
+            addr: "host:1".into(),
+            kind: Default::default(),
+            priority: 1,
+            username: None,
+            password: None,
+        }
+    }
+
+    #[test]
+    fn draft_edits_do_not_touch_original_until_confirm() {
+        let original = sample();
+        let mut edit = RowEdit::begin(0, &original);
+        edit.draft_mut().name = "b".into();
+        // 编辑期间原值不动；确认时才返回草稿供写回
+        assert_eq!(original.name, "a");
+        let (idx, draft) = edit.confirm();
+        assert_eq!(idx, 0);
+        assert_eq!(draft.name, "b");
+        assert_eq!(draft.addr, "host:1");
+    }
+
+    #[test]
+    fn accent_follows_status_with_testing_highest_priority() {
+        assert_eq!(row_accent(Some(HealthStatus::Up), false), GREEN);
+        assert_eq!(row_accent(Some(HealthStatus::Down), false), RED);
+        assert_eq!(row_accent(Some(HealthStatus::Unknown), false), GRAY);
+        assert_eq!(row_accent(None, false), GRAY);
+        // 测试中无论健康与否都用黄色提示
+        assert_eq!(row_accent(Some(HealthStatus::Up), true), YELLOW);
+        assert_eq!(row_accent(Some(HealthStatus::Down), true), YELLOW);
+    }
 }

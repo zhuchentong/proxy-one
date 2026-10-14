@@ -64,6 +64,8 @@ pub struct App {
     pub(crate) bypass_text: String,
     pub(crate) new_top: bool,
     pub(crate) pending_action: Option<RowAction>,
+    /// 上游行编辑状态：一次只展开一行（None=全部处于展示态）
+    pub(crate) row_edit: Option<cards::RowEdit>,
     pub(crate) autostart: bool,
     /// 独立日志页：筛选条件（关键字 + 级别点亮），跨开合保留
     pub(crate) log_search: String,
@@ -115,6 +117,7 @@ impl App {
             bypass_text,
             new_top: false,
             pending_action: None,
+            row_edit: None,
             autostart: crate::platform::autostart::is_enabled(),
             log_search: String::new(),
             log_levels: logs::LevelFilter::default(),

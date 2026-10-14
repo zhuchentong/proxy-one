@@ -6,18 +6,19 @@ use super::theme::{GRAY, GREEN, RED, SZ_TINY, YELLOW, palette};
 use crate::engine::{HealthStatus, LogEntry, LogLevel, Phase};
 
 /// 圆角卡片容器，`stroke` 用于强调（如「使用中」的上游卡片为品牌绿）。
-pub(crate) fn card(
+/// 返回响应以便调用方在卡片矩形上叠加绘制（如状态色条）。
+pub(crate) fn card<R>(
     ui: &mut egui::Ui,
     fill: egui::Color32,
     stroke: egui::Color32,
-    add: impl FnOnce(&mut egui::Ui),
-) {
+    add: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::InnerResponse<R> {
     egui::Frame::new()
         .fill(fill)
         .corner_radius(egui::CornerRadius::same(10))
         .stroke(egui::Stroke::new(1.0, stroke))
         .inner_margin(egui::Margin::same(10))
-        .show(ui, add);
+        .show(ui, add)
 }
 
 /// 小号胶囊徽章（优先级、当前上游等）。
@@ -85,28 +86,6 @@ pub(crate) fn styled_button_ex(
         .corner_radius(egui::CornerRadius::same(8))
         .min_size(egui::vec2(0.0, height)),
     )
-}
-
-/// 方形图标按钮：24×24 统一命中区域，字形居中，用于 ↑ ↓ ✕ ⚙ ☀ 等单字符操作。
-pub(crate) fn icon_button(
-    ui: &mut egui::Ui,
-    glyph: &str,
-    tooltip: &str,
-    dark: bool,
-) -> egui::Response {
-    let p = palette(dark);
-    let resp = ui.add(
-        egui::Button::new(egui::RichText::new(glyph).size(12.0).color(p.text))
-            .fill(p.field)
-            .stroke(egui::Stroke::new(1.0, p.card_stroke))
-            .corner_radius(egui::CornerRadius::same(6))
-            .min_size(egui::vec2(24.0, 24.0)),
-    );
-    if tooltip.is_empty() {
-        resp
-    } else {
-        resp.on_hover_text(tooltip)
-    }
 }
 
 /// 极简拨动开关：36×19 圆角胶囊 + 圆形滑块，点击切换。
