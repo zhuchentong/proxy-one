@@ -30,10 +30,10 @@ fn content(listen: &str) -> String {
     format!(
         "http_proxy=http://{listen}\n\
          https_proxy=http://{listen}\n\
-         all_proxy=socks5://{listen}\n\
+         all_proxy=http://{listen}\n\
          HTTP_PROXY=http://{listen}\n\
          HTTPS_PROXY=http://{listen}\n\
-         ALL_PROXY=socks5://{listen}\n\
+         ALL_PROXY=http://{listen}\n\
          no_proxy=localhost,127.0.0.1,::1\n\
          NO_PROXY=localhost,127.0.0.1,::1\n"
     )
@@ -103,7 +103,7 @@ mod tests {
         let c = content("127.0.0.1:8888");
         assert!(c.contains("http_proxy=http://127.0.0.1:8888"));
         assert!(c.contains("https_proxy=http://127.0.0.1:8888"));
-        assert!(c.contains("all_proxy=socks5://127.0.0.1:8888"));
+        assert!(c.contains("all_proxy=http://127.0.0.1:8888"));
         assert!(c.contains("no_proxy=localhost,127.0.0.1,::1"));
     }
 
